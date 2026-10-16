@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (git-ignored) and adjust.
+
+# Required: public IPv4 CIDRs allowed to reach the Kubernetes API.
+# Find your address with your network admin or a "what is my IP" service, then use /32.
+operator_cidrs = ["203.0.113.10/32"]
+
+# Optional overrides (defaults shown).
+# region              = "us-east-1"
+# control_plane_count = 1
+# worker_count        = 2
+# cni                 = "calico"
+# k8s_version         = "1.36.5"

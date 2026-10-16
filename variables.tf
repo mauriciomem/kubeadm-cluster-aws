@@ -1,0 +1,272 @@
+variable "ami_id" {
+  description = "AMI override for all nodes. Null uses the latest Canonical Ubuntu 24.04 amd64 image."
+  type        = string
+  default     = null
+}
+
+variable "calico_crds_sha256" {
+  description = "sha256 of Calico's v3_projectcalico_org.yaml for calico_version."
+  type        = string
+  default     = "5306c2c6d9fd6762d804f9da51c049b8269c33498a364c5df0eed555aba026bd"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.calico_crds_sha256))
+    error_message = "calico_crds_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "calico_operator_sha256" {
+  description = "sha256 of Calico's tigera-operator.yaml for calico_version."
+  type        = string
+  default     = "aef423b36aef8cf86567f92bbe5eea4b4ca105a6fc7dbf43de599c6fa70388ba"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.calico_operator_sha256))
+    error_message = "calico_operator_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "calico_version" {
+  description = "Calico release (tag of projectcalico/calico)."
+  type        = string
+  default     = "v3.33.0"
+}
+
+variable "cilium_cli_sha256" {
+  description = "sha256 of cilium-linux-amd64.tar.gz for cilium_cli_version."
+  type        = string
+  default     = "24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.cilium_cli_sha256))
+    error_message = "cilium_cli_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "cilium_cli_version" {
+  description = "cilium-cli release used to install Cilium."
+  type        = string
+  default     = "v0.20.1"
+}
+
+variable "cilium_version" {
+  description = "Cilium version (Helm chart version, no leading v)."
+  type        = string
+  default     = "1.20.3"
+}
+
+variable "cni" {
+  description = "CNI plugin: calico (default; tested on 1.36 and 1.37) or cilium."
+  type        = string
+  default     = "calico"
+
+  validation {
+    condition     = contains(["calico", "cilium"], var.cni)
+    error_message = "cni must be \"calico\" or \"cilium\"."
+  }
+}
+
+variable "containerd_version" {
+  description = "containerd.io apt version pattern from Docker's repository."
+  type        = string
+  default     = "2.3.*"
+}
+
+variable "control_plane_count" {
+  description = "Number of control-plane nodes. Must be odd so etcd keeps quorum."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.control_plane_count >= 1 && var.control_plane_count <= 7 && var.control_plane_count % 2 == 1
+    error_message = "control_plane_count must be an odd number between 1 and 7 (etcd quorum)."
+  }
+}
+
+variable "control_plane_instance_type" {
+  description = "EC2 instance type for control-plane nodes (amd64; kubeadm needs at least 2 vCPU and 2 GiB)."
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "csr_approver_digest" {
+  description = "Image index digest of ghcr.io/postfinance/kubelet-csr-approver:<csr_approver_version>."
+  type        = string
+  default     = "sha256:6469ef517d2b6d3cb108fce8a913483533a48b1cd78b5d4af307fa09e04a7818"
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.csr_approver_digest))
+    error_message = "csr_approver_digest must look like sha256:<64 hex>."
+  }
+}
+
+variable "csr_approver_version" {
+  description = "kubelet-csr-approver release, which approves kubelet serving certificates."
+  type        = string
+  default     = "v1.2.15"
+}
+
+variable "k8s_version" {
+  description = "Kubernetes version (kubeadm, kubelet, kubectl and control plane)."
+  type        = string
+  default     = "1.36.5"
+
+  validation {
+    condition     = can(regex("^1\\.[0-9]+\\.[0-9]+$", var.k8s_version))
+    error_message = "k8s_version must look like 1.36.5."
+  }
+}
+
+variable "metrics_server_sha256" {
+  description = "sha256 of metrics-server components.yaml for metrics_server_version."
+  type        = string
+  default     = "1cec29a5267809306a2c6ec74a3e449abbb705b4a8beed0c8a1963910f72c79b"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.metrics_server_sha256))
+    error_message = "metrics_server_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "metrics_server_version" {
+  description = "metrics-server release."
+  type        = string
+  default     = "v0.9.0"
+}
+
+variable "name_prefix" {
+  description = "Prefix for the cluster name; a random 4-character suffix is appended."
+  type        = string
+  default     = "kube-lab"
+
+  validation {
+    # The NLB name "<prefix>-<suffix>-api" must fit in 32 characters.
+    condition     = can(regex("^[a-z][a-z0-9-]{0,19}$", var.name_prefix)) && !endswith(var.name_prefix, "-")
+    error_message = "name_prefix must be 1-20 lowercase letters, digits or hyphens, start with a letter and not end with a hyphen."
+  }
+}
+
+variable "operator_cidrs" {
+  description = "Public IPv4 CIDRs allowed to reach the Kubernetes API, e.g. [\"203.0.113.10/32\"]."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.operator_cidrs) > 0
+    error_message = "operator_cidrs must list at least one CIDR."
+  }
+
+  validation {
+    condition = alltrue([
+      for c in var.operator_cidrs : can(regex("^[0-9.]+/[0-9]+$", c)) && try(cidrsubnet(c, 0, 0) == c, false)
+    ])
+    # A CIDR with host bits set (203.0.113.10/24) is normalized by AWS and causes perpetual diffs.
+    error_message = "Every operator_cidrs entry must be a canonical IPv4 CIDR such as 203.0.113.10/32 or 203.0.113.0/24."
+  }
+
+  validation {
+    condition     = alltrue([for c in var.operator_cidrs : try(tonumber(split("/", c)[1]) >= 8, false)])
+    error_message = "operator_cidrs prefixes must be /8 or longer; wider ranges open the API to a large part of the internet."
+  }
+}
+
+variable "pod_cidr" {
+  description = "Pod network CIDR (kubeadm podSubnet, used by both Calico and Cilium)."
+  type        = string
+  default     = "192.168.0.0/16"
+
+  validation {
+    condition = try(
+      cidrsubnet("${cidrhost(var.pod_cidr, 0)}/${min(split("/", var.pod_cidr)[1], split("/", var.vpc_cidr)[1])}", 0, 0) !=
+      cidrsubnet("${cidrhost(var.vpc_cidr, 0)}/${min(split("/", var.pod_cidr)[1], split("/", var.vpc_cidr)[1])}", 0, 0),
+      false
+    )
+    error_message = "pod_cidr must be a valid CIDR that does not overlap vpc_cidr."
+  }
+}
+
+variable "region" {
+  description = "AWS region."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "root_volume_size" {
+  description = "Root EBS volume size in GiB for every node."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.root_volume_size >= 20
+    error_message = "root_volume_size must be at least 20 GiB."
+  }
+}
+
+variable "service_cidr" {
+  description = "Service CIDR (kubeadm serviceSubnet)."
+  type        = string
+  default     = "10.96.0.0/12"
+
+  validation {
+    condition = try(
+      cidrsubnet("${cidrhost(var.service_cidr, 0)}/${min(split("/", var.service_cidr)[1], split("/", var.vpc_cidr)[1])}", 0, 0) !=
+      cidrsubnet("${cidrhost(var.vpc_cidr, 0)}/${min(split("/", var.service_cidr)[1], split("/", var.vpc_cidr)[1])}", 0, 0),
+      false
+    )
+    error_message = "service_cidr must be a valid CIDR that does not overlap vpc_cidr."
+  }
+
+  validation {
+    condition = try(
+      cidrsubnet("${cidrhost(var.service_cidr, 0)}/${min(split("/", var.service_cidr)[1], split("/", var.pod_cidr)[1])}", 0, 0) !=
+      cidrsubnet("${cidrhost(var.pod_cidr, 0)}/${min(split("/", var.service_cidr)[1], split("/", var.pod_cidr)[1])}", 0, 0),
+      false
+    )
+    error_message = "service_cidr must not overlap pod_cidr."
+  }
+}
+
+variable "single_nat_gateway" {
+  description = "Use one NAT gateway for all AZs (cheaper; set false for one per AZ)."
+  type        = bool
+  default     = true
+}
+
+variable "tags" {
+  description = "Extra tags applied to every AWS resource."
+  type        = map(string)
+  default     = {}
+}
+
+variable "vpc_cidr" {
+  description = "VPC CIDR. Must not overlap pod_cidr or service_cidr (kubeadm's default service range is 10.96.0.0/12)."
+  type        = string
+  default     = "10.10.0.0/16"
+
+  validation {
+    condition     = can(cidrhost(var.vpc_cidr, 0)) && try(tonumber(split("/", var.vpc_cidr)[1]) <= 16, false)
+    error_message = "vpc_cidr must be a valid IPv4 /16 (or larger) CIDR."
+  }
+}
+
+variable "wait_for_cluster" {
+  description = "Make terraform apply wait until the cluster reports ready (runs scripts/wait-for-cluster.sh locally)."
+  type        = bool
+  default     = false
+}
+
+variable "worker_count" {
+  description = "Number of worker nodes. With 0, workloads schedule on the control planes."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.worker_count >= 0 && var.worker_count <= 20 && floor(var.worker_count) == var.worker_count
+    error_message = "worker_count must be a whole number between 0 and 20."
+  }
+}
+
+variable "worker_instance_type" {
+  description = "EC2 instance type for worker nodes (amd64)."
+  type        = string
+  default     = "t3.medium"
+}

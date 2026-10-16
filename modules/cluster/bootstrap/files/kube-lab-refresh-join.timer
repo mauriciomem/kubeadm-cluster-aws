@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the kubeadm join token every 12h (tokens live 24h)
+
+[Timer]
+OnBootSec=1h
+OnUnitActiveSec=12h
+
+[Install]
+WantedBy=timers.target

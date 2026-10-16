@@ -1,0 +1,99 @@
+# Based on deploy/k8s in postfinance/kubelet-csr-approver ${version}.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubelet-csr-approver
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubelet-csr-approver
+rules:
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests]
+    verbs: [get, list, watch]
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests/approval]
+    verbs: [update]
+  - apiGroups: [certificates.k8s.io]
+    resources: [signers]
+    resourceNames: [kubernetes.io/kubelet-serving]
+    verbs: [approve]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create, get, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubelet-csr-approver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubelet-csr-approver
+subjects:
+  - kind: ServiceAccount
+    name: kubelet-csr-approver
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubelet-csr-approver
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubelet-csr-approver
+  template:
+    metadata:
+      labels:
+        app: kubelet-csr-approver
+    spec:
+      serviceAccountName: kubelet-csr-approver
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Workers may not have joined yet, and their serving certificates depend on this pod.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: kubelet-csr-approver
+          image: ghcr.io/postfinance/kubelet-csr-approver:${version}@${digest}
+          args: [-metrics-bind-address, ":8080", -health-probe-bind-address, ":8081", -leader-election]
+          env:
+            # Only node names this cluster creates, with IPs in the private node subnets.
+            - name: PROVIDER_REGEX
+              value: ^(cp|worker)-[0-9]+$
+            - name: PROVIDER_IP_PREFIXES
+              value: "${join(",", node_cidrs)}"
+            # Node names are not in DNS.
+            - name: BYPASS_DNS_RESOLUTION
+              value: "true"
+            - name: MAX_EXPIRATION_SEC
+              value: "31622400"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

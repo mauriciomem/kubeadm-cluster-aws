@@ -1,0 +1,47 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+bootstrapTokens:
+  - token: "$${JOIN_TOKEN}"
+    ttl: 24h0m0s
+    usages: [signing, authentication]
+    groups: [system:bootstrappers:kubeadm:default-node-token]
+certificateKey: "$${CERT_KEY}"
+localAPIEndpoint:
+  advertiseAddress: "$${PRIVATE_IP}"
+  bindPort: 6443
+nodeRegistration:
+  name: ${node_name}
+  criSocket: unix:///run/containerd/containerd.sock
+  # Explicit, so the serving certificate carries the VPC IP the CSR approver expects.
+  kubeletExtraArgs:
+    - name: node-ip
+      value: "$${PRIVATE_IP}"
+%{ if schedulable_control_plane ~}
+  # No workers: let workloads run on the control plane.
+  taints: []
+%{ endif ~}
+timeouts:
+  # etcd and the API server can start slowly on burstable instances.
+  controlPlaneComponentHealthCheck: 8m0s
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v${k8s_version}
+clusterName: ${cluster_name}
+controlPlaneEndpoint: "${api_endpoint}"
+apiServer:
+  certSANs:
+    - "${api_host}"
+networking:
+  podSubnet: ${pod_cidr}
+  serviceSubnet: ${service_cidr}
+  dnsDomain: cluster.local
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+serverTLSBootstrap: true
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: iptables

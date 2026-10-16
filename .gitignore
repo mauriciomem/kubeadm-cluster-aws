@@ -1,0 +1,39 @@
+# Terraform working dir
+.terraform/
+
+# State (local)
+*.tfstate
+*.tfstate.*
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Plans
+*.tfplan
+tfplan
+
+# Overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI config
+.terraformrc
+terraform.rc
+
+# Variable files (may hold secrets)
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Build artifacts
+build/
+
+# Kubeconfigs
+kubeconfig*
+*.kubeconfig
+
+# macOS
+.DS_Store

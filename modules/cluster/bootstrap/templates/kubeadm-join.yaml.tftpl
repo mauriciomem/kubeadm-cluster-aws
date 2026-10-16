@@ -1,0 +1,29 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "${api_endpoint}"
+    token: "$${JOIN_TOKEN}"
+    caCertHashes:
+      - "$${CA_CERT_HASH}"
+nodeRegistration:
+  name: ${node_name}
+  criSocket: unix:///run/containerd/containerd.sock
+  # Explicit, so the serving certificate carries the VPC IP the CSR approver expects.
+  kubeletExtraArgs:
+    - name: node-ip
+      value: "$${PRIVATE_IP}"
+%{ if control_plane && schedulable_control_plane ~}
+  # No workers: let workloads run on every control plane.
+  taints: []
+%{ endif ~}
+%{ if control_plane ~}
+controlPlane:
+  localAPIEndpoint:
+    advertiseAddress: "$${PRIVATE_IP}"
+    bindPort: 6443
+  certificateKey: "$${CERT_KEY}"
+%{ endif ~}
+timeouts:
+  discovery: 15m0s
+  tlsBootstrap: 10m0s
