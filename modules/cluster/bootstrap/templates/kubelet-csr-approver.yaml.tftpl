@@ -46,6 +46,7 @@ metadata:
   name: kubelet-csr-approver
   namespace: kube-system
 spec:
+  # One replica is enough for a lab; leader election stays on so scaling up is safe.
   replicas: 1
   selector:
     matchLabels:
@@ -72,14 +73,16 @@ spec:
           image: ghcr.io/postfinance/kubelet-csr-approver:${version}@${digest}
           args: [-metrics-bind-address, ":8080", -health-probe-bind-address, ":8081", -leader-election]
           env:
-            # Only node names this cluster creates, with IPs in the private node subnets.
+            # Only node names this cluster creates (node_name_regex in bootstrap/main.tf),
+            # with IPs in the private node subnets.
             - name: PROVIDER_REGEX
-              value: ^(cp|worker)-[0-9]+$
+              value: "${node_name_regex}"
             - name: PROVIDER_IP_PREFIXES
               value: "${join(",", node_cidrs)}"
             # Node names are not in DNS.
             - name: BYPASS_DNS_RESOLUTION
               value: "true"
+            # 366 days, as in upstream deploy/k8s.
             - name: MAX_EXPIRATION_SEC
               value: "31622400"
           livenessProbe:

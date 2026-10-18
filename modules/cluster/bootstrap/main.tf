@@ -15,15 +15,16 @@ locals {
   files_dir     = "${path.module}/files"
   templates_dir = "${path.module}/templates"
 
-  env = {
-    for k, n in var.nodes : k => templatefile("${local.templates_dir}/cluster.env.tftpl", {
-      node_name = k
-      role      = n.role
-      init      = n.init
+  # The contract between Terraform and the node scripts: each key, upper-cased, is a
+  # shell variable in /etc/kube-lab/cluster.env.
+  env_vars = {
+    for k, n in var.nodes : k => {
+      node_name    = k
+      node_role    = n.role
+      is_init_node = tostring(n.init)
       # cp-N joins only after cp-(N-1) reports in; see join_cluster in lib.sh.
       previous_control_plane = n.role == "control-plane" && n.index > 0 ? "cp-${n.index}" : ""
-      expected_nodes         = length(var.nodes)
-      cluster_name           = var.cluster_name
+      expected_nodes         = tostring(length(var.nodes))
       region                 = var.region
       ssm_prefix             = var.ssm_prefix
       api_endpoint           = var.api_endpoint
@@ -39,8 +40,17 @@ locals {
       cilium_cli_sha256      = var.software.cilium.cli_sha256
       metrics_server_version = var.software.metrics_server.version
       metrics_server_sha256  = var.software.metrics_server.sha256
-    })
+    }
   }
+
+  env = {
+    for k, vars in local.env_vars : k => templatefile("${local.templates_dir}/cluster.env.tftpl", vars)
+  }
+
+  # kubelet-csr-approver only approves serving certificates for node names that match.
+  # The root module builds the names (cp-N, worker-N); outputs.tf fails the plan if one
+  # doesn't match, rather than leaving its kubelet without a serving certificate.
+  node_name_regex = "^(cp|worker)-[0-9]+$"
 
   init_node = one([for k, n in var.nodes : k if n.init])
 
@@ -59,9 +69,10 @@ locals {
     {
       "/etc/kube-lab/kubeadm-init.yaml.tmpl" = local.kubeadm_init
       "/etc/kube-lab/kubelet-csr-approver.yaml" = templatefile("${local.templates_dir}/kubelet-csr-approver.yaml.tftpl", {
-        version    = var.software.csr_approver.version
-        digest     = var.software.csr_approver.digest
-        node_cidrs = var.node_cidrs
+        version         = var.software.csr_approver.version
+        digest          = var.software.csr_approver.digest
+        node_cidrs      = var.node_cidrs
+        node_name_regex = local.node_name_regex
       })
       "/usr/local/sbin/kube-lab-refresh-join"             = file("${local.files_dir}/refresh-join.sh")
       "/etc/systemd/system/kube-lab-refresh-join.service" = file("${local.files_dir}/kube-lab-refresh-join.service")

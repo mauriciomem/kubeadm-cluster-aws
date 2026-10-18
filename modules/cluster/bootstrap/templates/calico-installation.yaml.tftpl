@@ -1,15 +1,17 @@
+# Based on custom-resources.yaml from the Calico on-premises install guide. Its Goldmane
+# and Whisker resources are left out to save memory on t3.medium nodes.
 apiVersion: operator.tigera.io/v1
 kind: Installation
 metadata:
   name: default
 spec:
   calicoNetwork:
-    # Always-on VXLAN works with EC2 source/destination checks left enabled.
     bgp: Disabled
     ipPools:
       - name: default-ipv4-ippool
         cidr: ${pod_cidr}
         blockSize: 26
+        # Always-on VXLAN works with EC2 source/destination checks left enabled.
         encapsulation: VXLAN
         natOutgoing: Enabled
         nodeSelector: all()

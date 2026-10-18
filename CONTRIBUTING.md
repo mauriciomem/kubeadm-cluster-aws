@@ -53,6 +53,7 @@ credentials and creates nothing.
 |---|---|
 | `tests/nodes.tftest.hcl` | The node map: names, roles, indexes and taints |
 | `tests/cluster.tftest.hcl` | `modules/cluster` on its own: placement, the load balancer, security groups, SSM parameters, IAM, and the x86_64 check |
+| `tests/bootstrap.tftest.hcl` | `modules/cluster/bootstrap` on its own: the plan-time guards on node names and `cluster.env` values |
 | `tests/network.tftest.hcl` | `modules/network` on its own: AZ selection by instance type |
 | `tests/user_data.tftest.hcl` | Which files reach which node and what is rendered into them |
 | `tests/cni.tftest.hcl` | What changes with `cni` |

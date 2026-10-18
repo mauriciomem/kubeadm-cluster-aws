@@ -1,3 +1,9 @@
+# Filled in twice (see "Two templating passes" in docs/architecture.md):
+# - Terraform's templatefile fills the single-dollar placeholders at plan time: names,
+#   versions, CIDRs.
+# - Double-dollar placeholders reach the node with a single dollar, and envsubst fills them
+#   at boot (render_kubeadm_config in lib.sh): PRIVATE_IP, JOIN_TOKEN, CA_CERT_HASH and
+#   CERT_KEY. That keeps join secrets out of Terraform.
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -30,6 +36,7 @@ kubernetesVersion: v${k8s_version}
 clusterName: ${cluster_name}
 controlPlaneEndpoint: "${api_endpoint}"
 apiServer:
+  # kubeadm adds the controlPlaneEndpoint host on its own; listed so you can see it.
   certSANs:
     - "${api_host}"
 networking:
@@ -39,9 +46,11 @@ networking:
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
+# The kubeadm default, stated so you can see it matches containerd's SystemdCgroup = true.
 cgroupDriver: systemd
 serverTLSBootstrap: true
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
+# The default on Linux, stated so you know which mode you're debugging.
 mode: iptables

@@ -64,7 +64,7 @@ run "three_control_planes_no_workers" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-3"].files["/etc/kube-lab/cluster.env"], "PREVIOUS_CONTROL_PLANE=cp-2\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-3"].files["/etc/kube-lab/cluster.env"], "PREVIOUS_CONTROL_PLANE='cp-2'\n")
     error_message = "cp-3 must wait for cp-2 so etcd learners join one at a time."
   }
 
@@ -79,7 +79,7 @@ run "three_control_planes_no_workers" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "EXPECTED_NODES=3\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "EXPECTED_NODES='3'\n")
     error_message = "cp-1 must wait for all three nodes."
   }
 }

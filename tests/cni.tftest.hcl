@@ -21,7 +21,7 @@ run "calico_is_the_default" {
   command = plan
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI=calico\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI='calico'\n")
     error_message = "cluster.env must select Calico by default."
   }
 
@@ -49,12 +49,12 @@ run "cilium_when_selected" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI=cilium\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI='cilium'\n")
     error_message = "cluster.env must select Cilium."
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCILIUM_VERSION=1.20.3\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCILIUM_VERSION='1.20.3'\n")
     error_message = "cluster.env must carry the pinned Cilium version."
   }
 

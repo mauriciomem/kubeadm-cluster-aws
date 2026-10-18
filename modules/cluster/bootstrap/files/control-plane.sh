@@ -156,7 +156,7 @@ bootstrap_first_control_plane() {
 }
 
 prepare_node
-if [[ $INIT == true ]]; then
+if [[ $IS_INIT_NODE == true ]]; then
   bootstrap_first_control_plane
 else
   run_step join join_cluster

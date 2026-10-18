@@ -353,7 +353,7 @@ run "each_role_boots_its_own_script" {
   }
 
   assert {
-    condition     = strcontains(module.bootstrap.nodes["cp-2"].files["/etc/kube-lab/cluster.env"], "\nNODE_ROLE=control-plane\nINIT=false\n")
+    condition     = strcontains(module.bootstrap.nodes["cp-2"].files["/etc/kube-lab/cluster.env"], "\nNODE_ROLE='control-plane'\nIS_INIT_NODE='false'\n")
     error_message = "cp-2 must join as a control plane, not run kubeadm init."
   }
 }

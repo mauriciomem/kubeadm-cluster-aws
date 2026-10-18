@@ -22,7 +22,7 @@ run "cp1_runs_kubeadm_init" {
   command = plan
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nINIT=true\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nIS_INIT_NODE='true'\n")
     error_message = "cluster.env must mark cp-1 as the node that runs kubeadm init."
   }
 
@@ -59,7 +59,7 @@ run "kubeadm_init_config" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nK8S_MINOR=1.36\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nK8S_MINOR='1.36'\n")
     error_message = "The pkgs.k8s.io repository must track the v1.36 minor."
   }
 }
@@ -70,8 +70,8 @@ run "workers_join" {
   assert {
     condition = alltrue([
       for k in ["worker-1", "worker-2"] :
-      strcontains(module.cluster.bootstrap[k].files["/etc/kube-lab/cluster.env"], "\nINIT=false\n") &&
-      strcontains(module.cluster.bootstrap[k].files["/etc/kube-lab/cluster.env"], "\nNODE_ROLE=worker\n")
+      strcontains(module.cluster.bootstrap[k].files["/etc/kube-lab/cluster.env"], "\nIS_INIT_NODE='false'\n") &&
+      strcontains(module.cluster.bootstrap[k].files["/etc/kube-lab/cluster.env"], "\nNODE_ROLE='worker'\n")
     ])
     error_message = "Workers must be marked as joining workers in cluster.env."
   }

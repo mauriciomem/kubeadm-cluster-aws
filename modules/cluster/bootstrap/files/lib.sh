@@ -49,7 +49,7 @@ status() {
 }
 
 cluster_status() {
-  [[ $INIT == true ]] || return 0
+  [[ $IS_INIT_NODE == true ]] || return 0
   ssm_put status/cluster "$1" || log "could not publish cluster status '$1'"
 }
 

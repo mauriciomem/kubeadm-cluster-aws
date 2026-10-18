@@ -4,8 +4,9 @@ locals {
   cluster_tags = { Cluster = local.cluster_name }
 
   # Stable keys: scaling worker_count from 2 to 3 adds worker-3 and touches nothing else.
-  # init marks the one node that runs kubeadm init. The kubelet-csr-approver template
-  # only accepts these names (cp-N, worker-N), so keep the two in sync.
+  # init marks the one node that runs kubeadm init. kubelet-csr-approver only accepts
+  # names that match node_name_regex in modules/cluster/bootstrap/main.tf; the plan
+  # fails if one doesn't.
   cp_keys     = [for i in range(var.control_plane_count) : "cp-${i + 1}"]
   worker_keys = [for i in range(var.worker_count) : "worker-${i + 1}"]
   nodes = merge(
