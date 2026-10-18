@@ -96,7 +96,7 @@ resource "aws_iam_role" "node" {
 }
 
 # Each role's access to the cluster's SSM parameters.
-resource "aws_iam_role_policy" "node" {
+resource "aws_iam_role_policy" "cluster_parameters" {
   for_each = local.role_policies
 
   name   = "cluster-parameters"

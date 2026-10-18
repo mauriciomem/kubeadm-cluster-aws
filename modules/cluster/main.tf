@@ -117,7 +117,7 @@ resource "aws_instance" "node" {
   # Nodes overwrite these parameters at boot, so they and the IAM grants must exist first.
   depends_on = [
     aws_ssm_parameter.cluster,
-    aws_iam_role_policy.node,
+    aws_iam_role_policy.cluster_parameters,
     aws_iam_role_policy.session_manager,
   ]
 }
