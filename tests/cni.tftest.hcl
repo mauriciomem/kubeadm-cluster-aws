@@ -1,3 +1,5 @@
+# CNI selection. Both installers live in control-plane.sh, so these tests check what
+# actually changes with var.cni: the CNI= line in cluster.env and which manifests ship.
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -15,17 +17,17 @@ variables {
   operator_cidrs = ["203.0.113.10/32"]
 }
 
-run "calico_by_default" {
+run "calico_is_the_default" {
   command = plan
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "CNI=calico")
-    error_message = "Calico must be the default CNI."
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI=calico\n")
+    error_message = "cluster.env must select Calico by default."
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "tigera-operator.yaml")
-    error_message = "cp-1 must install Calico through the Tigera operator."
+    condition     = contains(keys(module.cluster.bootstrap["cp-1"].files), "/etc/kube-lab/calico-installation.yaml")
+    error_message = "cp-1 must receive the Calico Installation resource."
   }
 
   assert {
@@ -34,8 +36,8 @@ run "calico_by_default" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/calico-installation.yaml"], "cidr: 192.168.0.0/16")
-    error_message = "Calico IP pool must match pod_cidr."
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/calico-installation.yaml"], "cidr: 192.168.0.0/16\n")
+    error_message = "The Calico IP pool must match pod_cidr."
   }
 }
 
@@ -47,22 +49,29 @@ run "cilium_when_selected" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "CNI=cilium\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCNI=cilium\n")
     error_message = "cluster.env must select Cilium."
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "CILIUM_VERSION=1.20.3\n")
-    error_message = "Cilium version must be pinned to 1.20.3."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "--set ipam.mode=kubernetes")
-    error_message = "Cilium must use kubernetes IPAM so it follows pod_cidr."
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/cluster.env"], "\nCILIUM_VERSION=1.20.3\n")
+    error_message = "cluster.env must carry the pinned Cilium version."
   }
 
   assert {
     condition     = !contains(keys(module.cluster.bootstrap["cp-1"].files), "/etc/kube-lab/calico-installation.yaml")
-    error_message = "The Calico Installation CR must not ship when Cilium is selected."
+    error_message = "The Calico Installation resource must not ship when Cilium is selected."
+  }
+}
+
+run "only_cp1_receives_cni_manifests" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for k in ["worker-1", "worker-2"] :
+      !contains(keys(module.cluster.bootstrap[k].files), "/etc/kube-lab/calico-installation.yaml")
+    ])
+    error_message = "Only cp-1 installs the CNI, so only cp-1 receives its manifests."
   }
 }

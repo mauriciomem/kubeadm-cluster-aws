@@ -225,11 +225,6 @@ run "node_roles_can_do_their_job" {
     source = "./modules/cluster"
   }
 
-  override_data {
-    target = data.aws_iam_policy_document.worker
-    values = { json = "{}" }
-  }
-
   assert {
     condition = anytrue([
       for s in data.aws_iam_policy_document.worker.statement :
@@ -273,11 +268,6 @@ run "worker_cannot_read_control_plane_secrets" {
 
   module {
     source = "./modules/cluster"
-  }
-
-  override_data {
-    target = data.aws_iam_policy_document.worker
-    values = { json = "{}" }
   }
 
   assert {
@@ -325,6 +315,26 @@ run "worker_cannot_read_control_plane_secrets" {
       ]
     ]))
     error_message = "Control-plane permissions must be scoped to the cluster's parameter path."
+  }
+}
+
+run "each_role_boots_its_own_script" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  assert {
+    condition = alltrue([
+      for k, n in var.nodes : data.cloudinit_config.node[k].part[1].filename == "${n.role}.sh"
+    ])
+    error_message = "Each node must run the bootstrap script for its role."
+  }
+
+  assert {
+    condition     = strcontains(module.bootstrap.nodes["cp-2"].files["/etc/kube-lab/cluster.env"], "\nNODE_ROLE=control-plane\nINIT=false\n")
+    error_message = "cp-2 must join as a control plane, not run kubeadm init."
   }
 }
 

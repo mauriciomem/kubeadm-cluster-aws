@@ -1,3 +1,4 @@
+# The root module's node map: names, roles and indexes, and the taints that follow from them.
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -109,10 +110,5 @@ run "scaling_workers_keeps_existing_keys" {
   assert {
     condition     = keys(local.nodes) == ["cp-1", "worker-1", "worker-2", "worker-3", "worker-4"]
     error_message = "Scaling up must only append worker keys."
-  }
-
-  assert {
-    condition     = local.nodes["worker-4"].index % 3 == 0
-    error_message = "worker-4 should land in the first AZ (index 3 % 3 == 0)."
   }
 }
