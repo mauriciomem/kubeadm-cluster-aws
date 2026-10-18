@@ -94,7 +94,16 @@ install_cilium() {
     --set routingMode=tunnel \
     --set tunnelProtocol=vxlan \
     --set kubeProxyReplacement=false
-  cilium status --wait --wait-duration 15m
+
+  # Not 'cilium status': it execs into the agents, and exec fails ("tls: internal error") until
+  # kubelet-csr-approver, which runs after the CNI, approves the kubelets' serving certificates.
+  kubectl -n kube-system rollout status daemonset/cilium --timeout=15m
+  # Available, not rollout status: the operator's second replica can't schedule on a single node.
+  kubectl -n kube-system wait --for=condition=Available deployment/cilium-operator --timeout=5m
+  # Cilium 1.16 and later run Envoy as its own DaemonSet by default.
+  if kubectl -n kube-system get daemonset/cilium-envoy >/dev/null 2>&1; then
+    kubectl -n kube-system rollout status daemonset/cilium-envoy --timeout=5m
+  fi
 }
 
 install_cni() {

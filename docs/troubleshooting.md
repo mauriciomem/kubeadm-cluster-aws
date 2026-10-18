@@ -91,7 +91,7 @@ command that failed. The steps below are in the order they run.
 | `init` | cp-1 | Runs `kubeadm init` | `crictl ps -a` and `crictl logs <container-id>` for the control-plane containers, and `journalctl -u kubelet`. |
 | `publish` | cp-1 | Writes the join token, CA hash, certificate key and admin kubeconfig to SSM | Look for `AccessDenied` in the log. A re-run skips `init` and creates a new token and certificate key. |
 | `local-kubeconfig` | cp-1 | Writes a kubeconfig for the local API server to `/run/kube-lab`, which the add-on steps use | The log shows whether the instance metadata lookup or the copy failed. |
-| `cni` | cp-1 | Installs Calico or Cilium and waits up to 15 minutes for it | Calico: `kubectl get tigerastatus` and `kubectl -n tigera-operator logs deploy/tigera-operator`. Cilium: `cilium status`. A checksum mismatch in the log means the pinned sha256 doesn't match the download. |
+| `cni` | cp-1 | Installs Calico or Cilium and waits up to 15 minutes for it | Calico: `kubectl get tigerastatus` and `kubectl -n tigera-operator logs deploy/tigera-operator`. Cilium: `kubectl -n kube-system get pods -l k8s-app=cilium` and the cilium-operator pods. `cilium status` only works once the kubelets' serving certificates are approved, normally within a minute of the bootstrap. A checksum mismatch in the log means the pinned sha256 doesn't match the download. If `kubectl logs` fails with `tls: internal error`, see [below](#kubectl-logs-or-exec-fails-with-tls-internal-error). |
 | `csr-approver` | cp-1 | Applies kubelet-csr-approver | Read the log; the API server must be reachable on cp-1. |
 | `metrics-server` | cp-1 | Downloads, checks and applies metrics-server | A checksum mismatch or a failed download. |
 | `refresh-timer` | cp-1 | Enables the join-token refresh timer | `systemctl status kube-lab-refresh-join.timer`. |
@@ -151,6 +151,23 @@ kubectl -n kube-system logs deploy/kubelet-csr-approver
 ```
 
 As a last resort, approve a request by hand with `kubectl certificate approve <csr-name>`.
+
+### kubectl logs or exec fails with tls: internal error
+
+Right after the bootstrap, `kubectl logs`, `kubectl exec`, `kubectl port-forward` and
+`cilium status` can fail with:
+
+```text
+error dialing backend: remote error: tls: internal error
+```
+
+These commands go through the kubelet, and a kubelet can't serve them until kubelet-csr-approver
+has approved its serving certificate. That normally happens within a minute of the bootstrap,
+so wait and try again. `kubectl get csr` shows the requests: `Approved,Issued` is what you want.
+
+If cp-1 failed at `cni`, the approver was never installed, so the requests stay `Pending`. Read
+container logs on the node with `crictl ps -a` and `crictl logs <container-id>` instead, or
+approve the requests by hand as in the previous section.
 
 ### A new control plane can't download certificates
 

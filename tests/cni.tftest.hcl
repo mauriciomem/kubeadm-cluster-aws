@@ -1,5 +1,6 @@
 # CNI selection. Both installers live in control-plane.sh, so these tests check what
-# actually changes with var.cni: the CNI= line in cluster.env and which manifests ship.
+# actually changes with var.cni: the CNI= line in cluster.env and which manifests ship,
+# plus how cp-1's script waits for each CNI.
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -39,6 +40,11 @@ run "calico_is_the_default" {
     condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/calico-installation.yaml"], "cidr: 192.168.0.0/16\n")
     error_message = "The Calico IP pool must match pod_cidr."
   }
+
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "kubectl wait --for=condition=Available tigerastatus/calico")
+    error_message = "The Calico install must wait for tigerastatus/calico to be Available."
+  }
 }
 
 run "cilium_when_selected" {
@@ -61,6 +67,23 @@ run "cilium_when_selected" {
   assert {
     condition     = !contains(keys(module.cluster.bootstrap["cp-1"].files), "/etc/kube-lab/calico-installation.yaml")
     error_message = "The Calico Installation resource must not ship when Cilium is selected."
+  }
+
+  # The CNI step runs before kubelet-csr-approver, so kubelets have no serving certificate
+  # yet and anything that execs into a pod fails. 'cilium status' does exactly that.
+  assert {
+    condition     = length(regexall("(?m)^[^#\n]*\\bcilium status\\b", module.cluster.bootstrap["cp-1"].script)) == 0
+    error_message = "The Cilium install must not wait with 'cilium status': it needs kubelet exec, which fails until the serving CSRs are approved."
+  }
+
+  assert {
+    condition = alltrue([
+      for wait in [
+        "rollout status daemonset/cilium --timeout=",
+        "--for=condition=Available deployment/cilium-operator",
+      ] : strcontains(module.cluster.bootstrap["cp-1"].script, wait)
+    ])
+    error_message = "The Cilium install must wait for the agent DaemonSet and the operator through the API server."
   }
 }
 
