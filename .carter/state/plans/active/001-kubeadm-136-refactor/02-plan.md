@@ -213,6 +213,15 @@ planned.
   operations, troubleshooting, costs, labs) and `CONTRIBUTING.md`. MH10 is covered across
   those files.
 - P7 gate: tflint now runs the full rule set, including `terraform_standard_module_structure`.
-- Open: R9 (are the `ec2messages` actions needed?) and the bootstrap-script findings deferred
-  to phase 2 depend on the e2e result.
+- R9: e2e run 1 on 36def8e passed, including Session Manager sessions on every node. Phase 2
+  then dropped the six `ec2messages` actions to match AWS's minimal Session Manager policy, so
+  the next e2e must open a session on every node again (interactive and
+  `AWS-StartNonInteractiveCommand`).
+- MH4 and log checks: the MH4 pattern is right for `terraform.tfstate`, but on node and
+  console logs `[a-z0-9]{6}\.[a-z0-9]{16}` also matches ordinary text, such as
+  `policy.admissionregistration`. To check a log for the join token, fetch the real token
+  (`aws ssm get-parameter --name /<cluster>/join/token --with-decryption`) and grep for that
+  exact value, and do the same for the certificate key.
+- R8: e2e run 1 reached `ready` about four minutes after apply. The 40-minute caps stay: they
+  only bound how long a broken boot hangs, and the comments next to them say so.
 

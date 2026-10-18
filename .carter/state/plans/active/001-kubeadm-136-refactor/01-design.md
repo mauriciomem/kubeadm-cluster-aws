@@ -370,7 +370,7 @@ the original design.
 - File tree (§1): Every module has `terraform.tf`, not `versions.tf`. `modules/cluster/nodes.tf`
   became `main.tf`. Bootstrap rendering lives in a provider-less submodule,
   `modules/cluster/bootstrap`, with `files/` (scripts and units copied verbatim: `lib.sh`,
-  `control-plane.sh`, `worker.sh`, `refresh-join.sh`, the systemd units) and `templates/`
+  `control-plane.sh`, `worker.sh`, `kube-lab-refresh-join.sh`, the systemd units) and `templates/`
   (`cluster.env`, kubeadm init/join, Calico Installation, kubelet-csr-approver). There is no
   `common.sh.tftpl`, `cloud-config.yaml.tftpl` or `refresh-join.sh.tftpl`; the cloud-config is
   built with `yamlencode` in `bootstrap/main.tf`. Tests also include `cluster.tftest.hcl`,
@@ -379,12 +379,18 @@ the original design.
 - Status values (§3.1): As built, nodes go `pending → bootstrapping → waiting → joining →
   joined`; cp-1 goes `pending → bootstrapping → initializing → initialized → joined`; the
   cluster goes `pending → installing → ready`. `installing` is a cluster status, not a node
-  status. `docs/architecture.md` has the full table.
+  status. `docs/architecture.md` has the full table. The cp-1 wait step is `wait-nodes`, as
+  §3.2 planned; `containerd`, `shell`, `local-kubeconfig` and `root-kubeconfig` are steps of
+  their own, so every failure reports the step that was running.
+- Join token timer (§3.5): `OnBootSec=5min`, not 1h, so a cluster restarted after more than a
+  day gets a valid token within minutes.
+- Shellcheck (§11): CI checks `modules/cluster/bootstrap/files/*.sh` in place with `-x`. The
+  render harness is only used for the size report and the kubeadm config check.
 - IAM (§6.3): `AmazonSSMManagedInstanceCore` is not attached. Both roles get an inline
   Session Manager policy instead. The control-plane role has `ssm:GetParameter`,
   `ssm:GetParameters` and `ssm:PutParameter` on `/<cluster>/*`, without
-  `ssm:GetParametersByPath`. The inline policy still includes six `ec2messages` actions; whether
-  sessions need them is open until the e2e (plan R9).
+  `ssm:GetParametersByPath`. After e2e run 1, the six `ec2messages` actions were dropped, so
+  the inline policy is exactly AWS's minimal Session Manager policy (plan R9).
 - Host prep (§9): The container-runtimes page only documents `net.ipv4.ip_forward`. The
   `br_netfilter` module and the `bridge-nf-call-*` sysctls are kept, but the ✅ on them above is
   wrong.

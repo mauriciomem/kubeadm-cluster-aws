@@ -33,6 +33,28 @@ about it.
    crictl ps -a
    ```
 
+### Run one command without an interactive shell
+
+To grab a log from a script, or when an interactive session is awkward, run a single command
+through Session Manager:
+
+```bash
+id=i-0123456789abcdef0    # the node's instance_id, from terraform output nodes
+sleep 30 | aws ssm start-session --region "$(terraform output -raw region)" --target "$id" \
+  --document-name AWS-StartNonInteractiveCommand \
+  --parameters command="sudo tail -n 200 /var/log/kube-lab-bootstrap.log"
+```
+
+Three things to know:
+
+- The session ends when its input closes, before the output arrives. `sleep 30 |` keeps it
+  open; use a longer sleep for slower commands.
+- The command runs as `ssm-user`, whose `PATH` doesn't include `/snap/bin`. To run the AWS
+  CLI on the node, call it as `/snap/bin/aws`.
+- If the command needs complicated quoting, put the parameters in a file, such as
+  `{"command": ["sudo journalctl -u kubelet --no-pager -n 100"]}` in `params.json`, and pass
+  `--parameters file://params.json`.
+
 ## Status values
 
 | Value | Meaning | Typical time in this state |
