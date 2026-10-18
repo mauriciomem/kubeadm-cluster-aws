@@ -170,7 +170,8 @@ new one.
 ## Join tokens
 
 `kube-lab-refresh-join.timer` on cp-1 creates a new 24-hour join token every 12 hours and
-publishes it to SSM. Its first run is one hour after boot. To publish a token now, run
+publishes it to SSM. It also runs five minutes after every boot, so a cluster you stopped for
+more than a day gets a valid token again right away. To publish a token now, run
 `sudo kube-lab-refresh-join` on cp-1. `systemctl list-timers kube-lab-refresh-join.timer` shows
 when it runs next.
 

@@ -74,7 +74,7 @@ locals {
         node_cidrs      = var.node_cidrs
         node_name_regex = local.node_name_regex
       })
-      "/usr/local/sbin/kube-lab-refresh-join"             = file("${local.files_dir}/refresh-join.sh")
+      "/usr/local/sbin/kube-lab-refresh-join"             = file("${local.files_dir}/kube-lab-refresh-join.sh")
       "/etc/systemd/system/kube-lab-refresh-join.service" = file("${local.files_dir}/kube-lab-refresh-join.service")
       "/etc/systemd/system/kube-lab-refresh-join.timer"   = file("${local.files_dir}/kube-lab-refresh-join.timer")
     },

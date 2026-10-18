@@ -51,24 +51,26 @@ full sequence.
 
 ## Failed steps
 
-A value such as `failed:packages` names the step that was running. One caveat: a few short
-actions run between steps, and a failure there reports the step before it. For example, if
-copying the admin kubeconfig to `/root/.kube` fails after a successful join, the node reports
-`failed:join`. The log always shows the real command.
+A value such as `failed:packages` names the step that was running, and the log shows the
+command that failed. The steps below are in the order they run.
 
 | Step | Nodes | What it does | What to check |
 |---|---|---|---|
 | `awscli` | all | Installs the AWS CLI snap | The node can't report this failure, so it stays `pending`. Open a shell and read the log. The usual cause is no internet access through the NAT gateway. |
 | `host` | all | Turns off swap, loads kernel modules, sets sysctls | Read the log. This rarely fails. |
 | `packages` | all | Installs containerd, kubeadm, kubelet and kubectl from the Docker and Kubernetes apt repositories | A repository or mirror was down, `containerd_version` matches no package, or an apt signing key changed. A key mismatch stops the bootstrap on purpose: check the new key's fingerprint against the Docker and Kubernetes install docs before you update `lib.sh`. |
+| `containerd` | all | Writes `/etc/containerd/config.toml` (CRI on, systemd cgroups) and restarts containerd | `journalctl -u containerd`. |
+| `shell` | all | Adds kubectl completion and the `k` alias for every user | Read the log. This rarely fails. |
 | `init` | cp-1 | Runs `kubeadm init` | `crictl ps -a` and `crictl logs <container-id>` for the control-plane containers, and `journalctl -u kubelet`. |
 | `publish` | cp-1 | Writes the join token, CA hash, certificate key and admin kubeconfig to SSM | Look for `AccessDenied` in the log. A re-run skips `init` and creates a new token and certificate key. |
+| `local-kubeconfig` | cp-1 | Writes a kubeconfig for the local API server to `/run/kube-lab`, which the add-on steps use | The log shows whether the instance metadata lookup or the copy failed. |
 | `cni` | cp-1 | Installs Calico or Cilium and waits up to 15 minutes for it | Calico: `kubectl get tigerastatus` and `kubectl -n tigera-operator logs deploy/tigera-operator`. Cilium: `cilium status`. A checksum mismatch in the log means the pinned sha256 doesn't match the download. |
 | `csr-approver` | cp-1 | Applies kubelet-csr-approver | Read the log; the API server must be reachable on cp-1. |
 | `metrics-server` | cp-1 | Downloads, checks and applies metrics-server | A checksum mismatch or a failed download. |
 | `refresh-timer` | cp-1 | Enables the join-token refresh timer | `systemctl status kube-lab-refresh-join.timer`. |
-| `wait-cluster` | cp-1 | Waits up to 30 minutes for every node to be `Ready` | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
+| `wait-nodes` | cp-1 | Waits up to 30 minutes for every node to be `Ready` | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
 | `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
+| `root-kubeconfig` | control planes | Copies `admin.conf` to `/root/.kube/config`, so `sudo -i` gives you a working kubectl | Check that `/etc/kubernetes/admin.conf` exists. |
 
 ## Run the bootstrap again
 
@@ -81,7 +83,8 @@ sudo bash /var/lib/cloud/instance/scripts/worker.sh    # or control-plane.sh
 ```
 
 Each finished step leaves a marker in `/var/lib/kube-lab/`, such as `packages.done`. Delete a
-marker to make that step run again.
+marker to make that step run again. `local-kubeconfig` and `root-kubeconfig` have no marker:
+they are quick and run every time.
 
 If cp-1 fails at `init` and a reset doesn't help, the quickest fix is a new cluster:
 `terraform destroy`, then `terraform apply`.

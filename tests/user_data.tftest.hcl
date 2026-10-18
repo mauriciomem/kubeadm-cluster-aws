@@ -186,13 +186,13 @@ run "static_guard_join_secrets_stay_out_of_logs" {
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "RUN_DIR=/run/kube-lab\n")
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "readonly RUN_DIR=/run/kube-lab\n")
     error_message = "Rendered kubeadm configs must live on tmpfs (/run/kube-lab)."
   }
 
   assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "trap 'rm -f \"$RUN_DIR\"/kubeadm-*.yaml' EXIT")
-    error_message = "Rendered kubeadm configs must be removed on exit, including failures."
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "trap 'rm -f \"$RUN_DIR\"/kubeadm-*.yaml \"$RUN_DIR\"/admin-local.conf' EXIT")
+    error_message = "Rendered kubeadm configs and the local admin kubeconfig must be removed on exit, including failures."
   }
 
   assert {

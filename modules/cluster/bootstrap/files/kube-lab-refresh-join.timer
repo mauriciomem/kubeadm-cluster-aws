@@ -2,7 +2,9 @@
 Description=Refresh the kubeadm join token every 12h (tokens live 24h)
 
 [Timer]
-OnBootSec=1h
+# Soon after boot, so a cluster that was stopped for more than a day gets a valid token
+# within minutes instead of an hour.
+OnBootSec=5min
 OnUnitActiveSec=12h
 
 [Install]

@@ -164,7 +164,8 @@ etcd member as a learner, and etcd allows one learner at a time. cp-2 waits for 
 `initialized`, cp-3 waits for cp-2 to reach `joined`, and so on.
 
 cp-1 also enables `kube-lab-refresh-join.timer`, which publishes a fresh 24-hour join token
-every 12 hours. Nodes you add days later still find a valid token.
+every 12 hours and five minutes after every boot. Nodes you add days later, or after you
+restart a stopped cluster, still find a valid token.
 
 ### Status values
 
@@ -189,9 +190,11 @@ cluster's progress to `/<cluster>/status/cluster`.
 | `ready` | Every node is `Ready` and cp-1 has finished. |
 | `failed:<step>` | cp-1 failed at the named step. |
 
-The steps, in order, are `awscli`, `host` and `packages` on every node, then `init`, `publish`,
-`cni`, `csr-approver`, `metrics-server`, `refresh-timer` and `wait-cluster` on cp-1, or `join`
-on the other nodes.
+The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node.
+cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`, `metrics-server`,
+`refresh-timer` and `wait-nodes`; the other nodes run `join`. Control planes finish with
+`root-kubeconfig`. Every failure reports the step that was running. The one exception is a
+node that can't install the AWS CLI: it can't report anything and stays at `pending`.
 
 ### SSM parameters
 
@@ -216,7 +219,8 @@ The files in `modules/cluster/bootstrap/templates` are filled in twice:
 - `$${X}` reaches the node as `${X}`, and `envsubst` fills it in at boot. Only the kubeadm
   configs use this, for `PRIVATE_IP`, `JOIN_TOKEN`, `CA_CERT_HASH` and `CERT_KEY`. The node
   writes the result to `/run/kube-lab`, a tmpfs, and deletes it when the script exits. That is
-  how join secrets stay out of Terraform and off the disk.
+  how join secrets stay out of Terraform and off the disk. Each kubeadm template starts with a
+  comment that repeats this.
 
 ### File map
 
@@ -228,7 +232,7 @@ The files in `modules/cluster/bootstrap/templates` are filled in twice:
 | `/etc/kube-lab/kubeadm-join.yaml.tmpl` | `templates/kubeadm-join.yaml.tftpl` | all except cp-1 | 0600 |
 | `/etc/kube-lab/kubelet-csr-approver.yaml` | `templates/kubelet-csr-approver.yaml.tftpl` | cp-1 | 0600 |
 | `/etc/kube-lab/calico-installation.yaml` | `templates/calico-installation.yaml.tftpl` | cp-1, with Calico | 0600 |
-| `/usr/local/sbin/kube-lab-refresh-join` | `files/refresh-join.sh` | cp-1 | 0700 |
+| `/usr/local/sbin/kube-lab-refresh-join` | `files/kube-lab-refresh-join.sh` | cp-1 | 0700 |
 | `/etc/systemd/system/kube-lab-refresh-join.service` and `.timer` | `files/` | cp-1 | 0644 |
 | `/var/lib/cloud/instance/scripts/<role>.sh` | `files/control-plane.sh` or `files/worker.sh` | all | set by cloud-init |
 
@@ -238,7 +242,7 @@ At runtime the scripts also use:
 |---|---|
 | `/var/log/kube-lab-bootstrap.log` | The bootstrap log, readable by root only |
 | `/var/lib/kube-lab/<step>.done` | One marker per finished step, so a re-run skips it |
-| `/run/kube-lab/` | Filled-in kubeadm configs, on tmpfs, deleted on exit |
+| `/run/kube-lab/` | On tmpfs: filled-in kubeadm configs and cp-1's local admin kubeconfig, deleted when the script exits, and values on their way to SSM |
 | `/etc/kube-lab/calico/`, `/etc/kube-lab/metrics-server.yaml` | Add-on manifests cp-1 downloads and checks against their sha256 |
 
 ### Reading order

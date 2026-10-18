@@ -1,11 +1,13 @@
 #!/bin/bash
 # Control-plane bootstrap. cp-1 runs kubeadm init and installs the add-ons; the others join.
+# Flow and status values: see main below, and the status protocol at the top of lib.sh.
+set -Eeuo pipefail
 
-# shellcheck source=/dev/null
+# shellcheck source-path=SCRIPTDIR source=lib.sh
 source /etc/kube-lab/lib.sh
-start_bootstrap
 
 # Bootstrap talks to the local API server so add-ons don't wait for NLB target registration.
+# The EXIT trap in start_bootstrap removes it.
 LOCAL_KUBECONFIG=$RUN_DIR/admin-local.conf
 
 # Own step, so a re-run after a failed publish doesn't re-init. That re-run has lost the
@@ -26,6 +28,7 @@ publish_join_material() {
   retry 5 ssm_put join/certificate-key "$CERT_KEY"
   # Joiners poll the token, so it goes last.
   retry 5 ssm_put join/token "$JOIN_TOKEN"
+  # Advanced, like the tier Terraform created it with (modules/cluster/ssm.tf).
   retry 5 ssm_put_file kubeconfig/admin /etc/kubernetes/admin.conf Advanced
   unset JOIN_TOKEN CERT_KEY
 }
@@ -47,10 +50,11 @@ init_cluster() {
   rm -f "$config"
 }
 
+# A copy of admin.conf that talks to this node's API server directly. It asks IMDS for
+# the IP again because a re-run skips init_cluster, which set PRIVATE_IP.
 write_local_kubeconfig() {
   local ip
   ip=$(retry 5 imds local-ipv4)
-  install -d -m 0700 "$RUN_DIR"
   (
     umask 077
     sed "s#^\(\s*server:\).*#\1 https://$ip:6443#" /etc/kubernetes/admin.conf >"$LOCAL_KUBECONFIG"
@@ -133,35 +137,43 @@ all_nodes_ready() {
   ((ready >= EXPECTED_NODES))
 }
 
-wait_for_cluster() {
+# 30 minutes is generous (the first live run took about four); it only bounds a stuck boot.
+wait_for_all_nodes_ready() {
   wait_for 1800 "$EXPECTED_NODES nodes Ready" all_nodes_ready
   # Not fatal: nodes work without metrics, and a stuck rollout points at kubelet serving CSRs.
   kubectl -n kube-system rollout status deployment/metrics-server --timeout=5m ||
     log "metrics-server is not ready yet; check 'kubectl get csr' and the kubelet-csr-approver logs"
 }
 
+# cp-1 only. Node status: initializing -> initialized; cluster status: installing.
 bootstrap_first_control_plane() {
   run_step init init_cluster
   run_step publish publish_join_material
   status initialized
-  write_local_kubeconfig
+  run_always local-kubeconfig write_local_kubeconfig
   export KUBECONFIG=$LOCAL_KUBECONFIG
   cluster_status installing
   run_step cni install_cni
   run_step csr-approver install_csr_approver
   run_step metrics-server install_metrics_server
   run_step refresh-timer enable_join_refresh
-  run_step wait-cluster wait_for_cluster
-  rm -f "$LOCAL_KUBECONFIG"
+  run_step wait-nodes wait_for_all_nodes_ready
 }
 
-prepare_node
-if [[ $IS_INIT_NODE == true ]]; then
-  bootstrap_first_control_plane
-else
-  run_step join join_cluster
-fi
-setup_root_kubeconfig
-status joined
-cluster_status ready
-finish_bootstrap
+main() {
+  start_bootstrap
+  prepare_node
+  if [[ $IS_INIT_NODE == true ]]; then
+    bootstrap_first_control_plane
+  else
+    run_step join join_cluster
+  fi
+  run_always root-kubeconfig setup_root_kubeconfig
+  status joined
+  # Last, so every node status is final once wait-for-cluster.sh sees ready.
+  # A no-op except on cp-1.
+  cluster_status ready
+  finish_bootstrap
+}
+
+main "$@"

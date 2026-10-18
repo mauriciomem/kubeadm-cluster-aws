@@ -1,3 +1,4 @@
+# Started by kube-lab-refresh-join.timer, so there is no [Install] section.
 [Unit]
 Description=Publish a fresh kubeadm join token to SSM
 Wants=network-online.target
@@ -7,7 +8,7 @@ After=network-online.target
 Type=oneshot
 ExecStart=/usr/local/sbin/kube-lab-refresh-join
 # kubeadm token create and upload-certs only read /etc/kubernetes; nothing here writes
-# under /usr, /boot or /etc. Temp files (ssm_put) land in the private /tmp.
+# under /usr, /boot or /etc. ssm_put stages values in /run/kube-lab, which stays writable.
 ProtectSystem=full
 PrivateTmp=yes
 # tmpfs rather than yes: the aws-cli snap must create $HOME/snap on every run.
