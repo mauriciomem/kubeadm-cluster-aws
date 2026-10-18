@@ -16,8 +16,12 @@ env:
   TF_IN_AUTOMATION: "true"
   TERRAFORM_VERSION: "1.16.6"
   TFLINT_VERSION: "v0.64.0"
-  # trivy-action tags were hijacked in March 2026 (CVE-2026-33634), so CI installs a
-  # known-good trivy release directly and verifies its checksum.
+  # Pinned with a checksum so a runner image update can't change the result.
+  SHELLCHECK_VERSION: "v0.11.0"
+  SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  # trivy-action tags were hijacked in March 2026 (CVE-2026-33634,
+  # https://github.com/advisories/GHSA-69fq-xp46-6x23), so CI installs a known-good
+  # trivy release directly and verifies its checksum.
   TRIVY_VERSION: "0.69.3"
   TRIVY_SHA256: "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"
 
@@ -42,8 +46,10 @@ jobs:
       - name: terraform fmt
         run: terraform fmt -check -recursive
 
+      # readonly: fail if the committed lock file doesn't satisfy the constraints,
+      # instead of quietly updating it on the runner.
       - name: terraform init
-        run: terraform init -backend=false -input=false
+        run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: terraform validate
         run: terraform validate
@@ -71,7 +77,15 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Renders each CNI and topology, because the scripts take different branches.
+      - name: install shellcheck
+        run: |
+          tarball="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSLo "$tarball" "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/${tarball}"
+          echo "${SHELLCHECK_SHA256}  ${tarball}" | sha256sum --check
+          tar -xJf "$tarball" --strip-components=1 "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 0755 shellcheck /usr/local/bin/shellcheck
+
+      # Renders two topologies (Calico with workers; Cilium, 3 control planes, no workers).
       - name: render and shellcheck
         run: |
           shellcheck --version

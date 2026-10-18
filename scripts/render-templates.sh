@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Renders the node bootstrap content into build/ for shellcheck and size checks, offline.
-# Inputs come from the root module (via terraform console), so this sees the same
-# node map and pins as a real apply. Only the NLB DNS name and cluster suffix are fake.
+# Renders the node bootstrap content into build/ for shellcheck and size checks.
+# Needs no AWS credentials (terraform init still downloads providers). Inputs come from
+# the root module through terraform console, so this sees the same node map and pins as
+# a real apply. Only the NLB DNS name and the cluster suffix are fake.
 #
 #   ./scripts/render-templates.sh
 #   ./scripts/render-templates.sh -var cni=cilium -var control_plane_count=3 -var worker_count=0
@@ -17,8 +18,9 @@ mkdir -p "$build"
 rm -rf "${build:?}/nodes" "$build"/*.sh
 
 terraform init -backend=false -input=false >/dev/null
-# operator_cidrs is a placeholder for the required variable. node_cidrs mirrors the
-# network module's private /20s, since data sources are not read offline.
+# operator_cidrs is a placeholder for the required variable. node_cidrs repeats the
+# private subnet carving in modules/network/main.tf (keep the two in sync), because
+# the network module's data sources need AWS.
 echo 'jsonencode({ nodes = local.nodes, software = local.software, region = var.region, node_cidrs = [for i in range(3) : cidrsubnet(var.vpc_cidr, 4, i)] })' |
   terraform console -var 'operator_cidrs=["192.0.2.0/24"]' "$@" |
   jq -r 'fromjson' >"$build/render.tfvars.json"
