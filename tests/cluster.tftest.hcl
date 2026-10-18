@@ -210,11 +210,14 @@ run "session_manager_only" {
   }
 
   assert {
-    condition = alltrue([
-      for a in flatten([for s in data.aws_iam_policy_document.session_manager.statement : tolist(s.actions)]) :
-      startswith(a, "ssmmessages:") || startswith(a, "ec2messages:") || a == "ssm:UpdateInstanceInformation"
+    condition = toset(flatten([for s in data.aws_iam_policy_document.session_manager.statement : tolist(s.actions)])) == toset([
+      "ssm:UpdateInstanceInformation",
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
     ])
-    error_message = "The Session Manager policy must only hold agent and session channel actions."
+    error_message = "The Session Manager policy must be exactly AWS's minimal Session Manager policy. ec2messages would let the agent receive Run Command documents."
   }
 }
 

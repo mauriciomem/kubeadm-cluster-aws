@@ -18,11 +18,10 @@ data "aws_iam_policy_document" "assume_ec2" {
 }
 
 # Replaces AmazonSSMManagedInstanceCore, which also allows ssm:GetParameter on "*".
-# ssm:UpdateInstanceInformation plus the four ssmmessages actions is AWS's minimal
-# Session Manager policy: the agent registers and shell sessions flow over ssmmessages.
-# The ec2messages actions go further. They let the agent receive Run Command documents,
-# so anyone allowed ssm:SendCommand on these instances can run commands as root.
-# They stay until the end-to-end test shows whether sessions work without them.
+# This is AWS's minimal Session Manager instance policy: the agent registers with
+# ssm:UpdateInstanceInformation and shell sessions flow over ssmmessages.
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-create-iam-instance-profile.html
+# There are no ec2messages actions, so the agent can't receive Run Command documents.
 # None of these actions supports resource-level scoping, hence "*".
 data "aws_iam_policy_document" "session_manager" {
   statement {
@@ -33,12 +32,6 @@ data "aws_iam_policy_document" "session_manager" {
       "ssmmessages:CreateDataChannel",
       "ssmmessages:OpenControlChannel",
       "ssmmessages:OpenDataChannel",
-      "ec2messages:AcknowledgeMessage",
-      "ec2messages:DeleteMessage",
-      "ec2messages:FailMessage",
-      "ec2messages:GetEndpoint",
-      "ec2messages:GetMessages",
-      "ec2messages:SendReply",
     ]
     resources = ["*"]
   }

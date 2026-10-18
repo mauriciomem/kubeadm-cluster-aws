@@ -85,10 +85,11 @@ away from workers, even if someone attaches a broader policy later.
 Both roles get Session Manager access through an inline policy instead of the managed
 `AmazonSSMManagedInstanceCore` policy, because that one also allows `ssm:GetParameter` on every
 parameter in the account. The inline policy has `ssm:UpdateInstanceInformation` and the four
-`ssmmessages` channel actions, which is the minimal Session Manager policy AWS documents. It
-also has six `ec2messages` actions. Those let the agent receive Run Command documents, so
-anyone who may call `ssm:SendCommand` on these instances can run commands on them as root.
-Whether sessions work without `ec2messages` is still being tested.
+`ssmmessages` channel actions, which is the
+[minimal Session Manager policy](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-create-iam-instance-profile.html)
+AWS documents. It has no `ec2messages` actions, so the agent can't receive Run Command
+documents: Session Manager is the only way in, and every session shows up in the Session
+Manager history.
 
 Instances require IMDSv2 with a hop limit of 1, so pods on the pod network can't get
 instance-role credentials. Pods with `hostNetwork: true` still can; the
