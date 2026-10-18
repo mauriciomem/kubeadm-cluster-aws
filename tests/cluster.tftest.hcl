@@ -113,6 +113,23 @@ run "nodes_are_hardened" {
   }
 }
 
+run "root_volumes_are_tagged" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  variables {
+    tags = { Cluster = "kube-lab-test" }
+  }
+
+  assert {
+    condition     = aws_instance.node["worker-1"].root_block_device[0].tags == tomap({ Cluster = "kube-lab-test", Name = "kube-lab-test-worker-1-root" })
+    error_message = "Root volumes must carry the Cluster tag and a Name: instance tags don't reach volumes."
+  }
+}
+
 run "security_groups" {
   command = plan
 

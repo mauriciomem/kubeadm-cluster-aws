@@ -87,11 +87,15 @@ resource "aws_instance" "node" {
     instance_metadata_tags      = "disabled"
   }
 
+  # Instance tags don't reach volumes and default_tags only carry the static tags, so the
+  # Cluster tag goes here for cost attribution. The provider merges these with default_tags
+  # (root_block_device[0].tags_all), so the two don't conflict.
   root_block_device {
     volume_type           = "gp3"
     volume_size           = var.root_volume_size
     encrypted             = true
     delete_on_termination = true
+    tags                  = merge(var.tags, { Name = "${var.cluster_name}-${each.key}-root" })
   }
 
   lifecycle {

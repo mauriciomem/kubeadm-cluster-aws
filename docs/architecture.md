@@ -104,7 +104,7 @@ To run `terraform apply` and `terraform destroy`, the role must be able to:
 
 | Service | What Terraform does |
 |---|---|
-| EC2 and VPC | Create, tag and delete the VPC, subnets, route tables, internet gateway, NAT gateway, Elastic IP, security groups and rules, and instances. Read with `ec2:Describe*`, which covers `DescribeAvailabilityZones`, `DescribeInstanceTypeOfferings` and `DescribeInstanceTypes` |
+| EC2 and VPC | Create, tag and delete the VPC, subnets, route tables, internet gateway, NAT gateway, Elastic IP, security groups and rules, and instances, and tag their root volumes. Read with `ec2:Describe*`, which covers `DescribeAvailabilityZones`, `DescribeInstanceTypeOfferings` and `DescribeInstanceTypes` |
 | Elastic Load Balancing | Create, tag and delete a Network Load Balancer, a target group and a listener, and register targets |
 | IAM | Create and delete roles, inline role policies and instance profiles named after the cluster, and `iam:PassRole` for those roles |
 | SSM Parameter Store | Create, tag and delete parameters under `/<cluster>/`, and read the public Ubuntu AMI ID under `/aws/service/canonical/` |
