@@ -1,7 +1,8 @@
 # Terraform creates every parameter (so destroy removes them) with the placeholder
 # value "pending". The nodes overwrite them with the real values. value_wo is never
 # read back, so tokens and the admin kubeconfig never reach Terraform state.
-# The status values the nodes write are listed in docs/architecture.md.
+# The status values the nodes write are listed in docs/architecture.md and at the top of
+# bootstrap/files/lib.sh.
 locals {
   parameters = merge(
     {
