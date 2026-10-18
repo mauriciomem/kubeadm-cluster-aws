@@ -327,3 +327,39 @@ run "worker_cannot_read_control_plane_secrets" {
     error_message = "Control-plane permissions must be scoped to the cluster's parameter path."
   }
 }
+
+run "arm64_instance_types_rejected" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  variables {
+    worker_instance_type = "t4g.medium"
+  }
+
+  override_data {
+    target = data.aws_ec2_instance_type.node["t4g.medium"]
+    values = { supported_architectures = ["arm64"] }
+  }
+
+  expect_failures = [aws_instance.node]
+}
+
+run "unknown_node_role_rejected" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  variables {
+    nodes = {
+      cp-1     = { role = "control-plane", index = 0, init = true }
+      master-1 = { role = "master", index = 0, init = false }
+    }
+  }
+
+  expect_failures = [var.nodes]
+}

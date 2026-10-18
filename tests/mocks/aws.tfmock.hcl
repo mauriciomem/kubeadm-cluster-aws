@@ -12,6 +12,12 @@ mock_data "aws_ec2_instance_type_offerings" {
   }
 }
 
+mock_data "aws_ec2_instance_type" {
+  defaults = {
+    supported_architectures = ["x86_64"]
+  }
+}
+
 mock_data "aws_caller_identity" {
   defaults = {
     account_id = "123456789012"

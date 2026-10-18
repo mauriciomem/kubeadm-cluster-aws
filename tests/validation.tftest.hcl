@@ -1,3 +1,4 @@
+# Input validation: bad values must fail at plan, and valid edge cases must still plan.
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -171,4 +172,133 @@ run "long_name_prefix_rejected" {
   }
 
   expect_failures = [var.name_prefix]
+}
+
+run "trailing_hyphen_name_prefix_rejected" {
+  command = plan
+
+  variables {
+    name_prefix = "lab-"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "fractional_worker_count_rejected" {
+  command = plan
+
+  variables {
+    worker_count = 1.5
+  }
+
+  expect_failures = [var.worker_count]
+}
+
+run "vpc_cidr_smaller_than_slash_16_rejected" {
+  command = plan
+
+  variables {
+    vpc_cidr = "10.10.0.0/24"
+  }
+
+  expect_failures = [var.vpc_cidr]
+}
+
+run "malformed_pod_cidr_rejected" {
+  command = plan
+
+  variables {
+    pod_cidr = "192.168.0.0"
+  }
+
+  expect_failures = [var.pod_cidr]
+}
+
+run "region_with_shell_characters_rejected" {
+  command = plan
+
+  variables {
+    region = "us-east-1; true"
+  }
+
+  expect_failures = [var.region]
+}
+
+run "malformed_ami_id_rejected" {
+  command = plan
+
+  variables {
+    ami_id = "ami-123"
+  }
+
+  expect_failures = [var.ami_id]
+}
+
+run "calico_version_without_v_rejected" {
+  command = plan
+
+  variables {
+    calico_version = "3.33.0"
+  }
+
+  expect_failures = [var.calico_version]
+}
+
+run "cilium_version_with_v_rejected" {
+  command = plan
+
+  variables {
+    cilium_version = "v1.20.3"
+  }
+
+  expect_failures = [var.cilium_version]
+}
+
+run "cilium_cli_version_without_v_rejected" {
+  command = plan
+
+  variables {
+    cilium_cli_version = "0.20.1"
+  }
+
+  expect_failures = [var.cilium_cli_version]
+}
+
+run "metrics_server_version_without_v_rejected" {
+  command = plan
+
+  variables {
+    metrics_server_version = "0.9.0"
+  }
+
+  expect_failures = [var.metrics_server_version]
+}
+
+run "csr_approver_version_without_v_rejected" {
+  command = plan
+
+  variables {
+    csr_approver_version = "1.2.15"
+  }
+
+  expect_failures = [var.csr_approver_version]
+}
+
+# cluster.env is sourced as root on every node, so a version must not carry shell syntax.
+run "containerd_version_with_shell_characters_rejected" {
+  command = plan
+
+  variables {
+    containerd_version = "2.3.*' ; touch /tmp/x ; '"
+  }
+
+  expect_failures = [var.containerd_version]
+}
+
+run "exact_containerd_version_accepted" {
+  command = plan
+
+  variables {
+    containerd_version = "2.3.6-1~ubuntu.24.04~noble"
+  }
 }

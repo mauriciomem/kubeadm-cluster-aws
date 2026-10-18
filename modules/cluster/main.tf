@@ -10,6 +10,13 @@ data "aws_ssm_parameter" "ubuntu_ami" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
+# The AMI and the Cilium CLI download are amd64, so every instance type must be x86_64.
+data "aws_ec2_instance_type" "node" {
+  for_each = toset(values(local.instance_types))
+
+  instance_type = each.value
+}
+
 locals {
   ami_id = var.ami_id != null ? var.ami_id : data.aws_ssm_parameter.ubuntu_ami[0].insecure_value
 
@@ -91,6 +98,11 @@ resource "aws_instance" "node" {
     # A new AMI or bootstrap script must not rebuild nodes behind your back: cp-1 holds etcd.
     # Rebuild a node on purpose with: terraform apply -replace='module.cluster.aws_instance.node["worker-1"]'
     ignore_changes = [ami, user_data_base64]
+
+    precondition {
+      condition     = contains(data.aws_ec2_instance_type.node[local.instance_types[each.value.role]].supported_architectures, "x86_64")
+      error_message = "${local.instance_types[each.value.role]} is not an x86_64 instance type. The nodes run the amd64 Ubuntu image, so pick an x86_64 type such as t3.medium."
+    }
 
     precondition {
       condition     = length(data.cloudinit_config.node[each.key].rendered) <= local.max_user_data_base64
