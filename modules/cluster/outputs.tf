@@ -1,15 +1,15 @@
-output "api_endpoint" {
-  description = "Kubernetes API URL (internet-facing NLB)."
+output "api_url" {
+  description = "Kubernetes API URL: https://<NLB DNS name>:6443."
   value       = "https://${local.api_endpoint}"
 }
 
 output "bootstrap" {
-  description = "Rendered bootstrap content per node (no secrets; placeholders are filled on the node). For tests and inspection."
+  description = "Rendered bootstrap content per node, for tests and terraform console. Holds no secrets. Not a stable interface."
   value       = module.bootstrap.nodes
 }
 
-output "instances" {
-  description = "Node details keyed by node name."
+output "nodes" {
+  description = "Nodes keyed by name: role, instance ID, private IP and AZ."
   value = {
     for k, i in aws_instance.node : k => {
       role        = var.nodes[k].role
@@ -21,11 +21,6 @@ output "instances" {
 }
 
 output "ssm_parameter_prefix" {
-  description = "SSM Parameter Store path holding cluster status and join material."
+  description = "SSM path holding the join material, the admin kubeconfig and bootstrap status."
   value       = local.ssm_prefix
-}
-
-output "user_data_base64_length" {
-  description = "Length of each node's gzipped, base64-encoded user_data."
-  value       = { for k, c in data.cloudinit_config.node : k => length(c.rendered) }
 }

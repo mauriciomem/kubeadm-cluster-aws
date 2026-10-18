@@ -1,3 +1,11 @@
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
+locals {
+  ssm_prefix_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}"
+}
+
 data "aws_iam_policy_document" "assume_ec2" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -9,10 +17,13 @@ data "aws_iam_policy_document" "assume_ec2" {
   }
 }
 
-# Session Manager shell access only, in place of AmazonSSMManagedInstanceCore (which also
-# allows ssm:GetParameter on "*"). Run Command and State Manager are intentionally not enabled.
-# ec2messages is the SSM Agent's message channel; ssmmessages carries the sessions.
-# These actions don't support resource-level scoping, hence "*".
+# Replaces AmazonSSMManagedInstanceCore, which also allows ssm:GetParameter on "*".
+# ssm:UpdateInstanceInformation plus the four ssmmessages actions is AWS's minimal
+# Session Manager policy: the agent registers and shell sessions flow over ssmmessages.
+# The ec2messages actions go further. They let the agent receive Run Command documents,
+# so anyone allowed ssm:SendCommand on these instances can run commands as root.
+# They stay until the end-to-end test shows whether sessions work without them.
+# None of these actions supports resource-level scoping, hence "*".
 data "aws_iam_policy_document" "session_manager" {
   statement {
     sid = "SessionManager"
@@ -75,23 +86,25 @@ data "aws_iam_policy_document" "worker" {
   }
 }
 
+# One role per node role. The keys match var.nodes[*].role.
 locals {
-  roles = {
+  role_policies = {
     control-plane = data.aws_iam_policy_document.control_plane.json
     worker        = data.aws_iam_policy_document.worker.json
   }
 }
 
 resource "aws_iam_role" "node" {
-  for_each = local.roles
+  for_each = local.role_policies
 
   name               = "${var.cluster_name}-${each.key}"
   assume_role_policy = data.aws_iam_policy_document.assume_ec2.json
   tags               = var.tags
 }
 
+# Each role's access to the cluster's SSM parameters.
 resource "aws_iam_role_policy" "node" {
-  for_each = local.roles
+  for_each = local.role_policies
 
   name   = "cluster-parameters"
   role   = aws_iam_role.node[each.key].id
@@ -99,7 +112,7 @@ resource "aws_iam_role_policy" "node" {
 }
 
 resource "aws_iam_role_policy" "session_manager" {
-  for_each = local.roles
+  for_each = local.role_policies
 
   name   = "session-manager"
   role   = aws_iam_role.node[each.key].id
@@ -107,7 +120,7 @@ resource "aws_iam_role_policy" "session_manager" {
 }
 
 resource "aws_iam_instance_profile" "node" {
-  for_each = local.roles
+  for_each = local.role_policies
 
   name = "${var.cluster_name}-${each.key}"
   role = aws_iam_role.node[each.key].name

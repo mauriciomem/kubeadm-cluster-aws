@@ -1,8 +1,13 @@
-# Renders per-node bootstrap content. No providers, so scripts/render-templates.sh can
-# evaluate it offline for shellcheck and size checks.
+# Renders what each node boots with: a cloud-config that writes files under /etc/kube-lab,
+# and one role script (files/control-plane.sh or files/worker.sh).
+# It has no providers, so scripts/render-templates.sh can evaluate it without AWS credentials.
+#
+# Two templating passes, so watch the dollar signs in templates/:
+#   ${x}  is filled here by templatefile, at plan time.
+#   $${X} becomes ${X} and is filled on the node by envsubst, at boot (join secrets only).
+# docs/architecture.md describes the boot sequence, status values and SSM paths.
 locals {
-  sw        = var.software
-  k8s_minor = join(".", slice(split(".", local.sw.k8s_version), 0, 2))
+  k8s_minor = join(".", slice(split(".", var.software.k8s_version), 0, 2))
 
   control_plane_names = sort([for k, n in var.nodes : k if n.role == "control-plane"])
   worker_count        = length(var.nodes) - length(local.control_plane_names)
@@ -22,18 +27,18 @@ locals {
       region                 = var.region
       ssm_prefix             = var.ssm_prefix
       api_endpoint           = var.api_endpoint
-      k8s_version            = local.sw.k8s_version
+      k8s_version            = var.software.k8s_version
       k8s_minor              = local.k8s_minor
-      containerd_version     = local.sw.containerd_version
-      cni                    = local.sw.cni
-      calico_version         = local.sw.calico.version
-      calico_crds_sha256     = local.sw.calico.crds_sha256
-      calico_operator_sha256 = local.sw.calico.operator_sha256
-      cilium_version         = local.sw.cilium.version
-      cilium_cli_version     = local.sw.cilium.cli_version
-      cilium_cli_sha256      = local.sw.cilium.cli_sha256
-      metrics_server_version = local.sw.metrics_server.version
-      metrics_server_sha256  = local.sw.metrics_server.sha256
+      containerd_version     = var.software.containerd_version
+      cni                    = var.software.cni
+      calico_version         = var.software.calico.version
+      calico_crds_sha256     = var.software.calico.crds_sha256
+      calico_operator_sha256 = var.software.calico.operator_sha256
+      cilium_version         = var.software.cilium.version
+      cilium_cli_version     = var.software.cilium.cli_version
+      cilium_cli_sha256      = var.software.cilium.cli_sha256
+      metrics_server_version = var.software.metrics_server.version
+      metrics_server_sha256  = var.software.metrics_server.sha256
     })
   }
 
@@ -41,12 +46,12 @@ locals {
 
   kubeadm_init = templatefile("${local.templates_dir}/kubeadm-init.yaml.tftpl", {
     node_name                 = local.init_node
-    k8s_version               = local.sw.k8s_version
+    k8s_version               = var.software.k8s_version
     cluster_name              = var.cluster_name
     api_endpoint              = var.api_endpoint
     api_host                  = var.api_host
-    pod_cidr                  = local.sw.pod_cidr
-    service_cidr              = local.sw.service_cidr
+    pod_cidr                  = var.software.pod_cidr
+    service_cidr              = var.software.service_cidr
     schedulable_control_plane = local.worker_count == 0
   })
 
@@ -54,17 +59,17 @@ locals {
     {
       "/etc/kube-lab/kubeadm-init.yaml.tmpl" = local.kubeadm_init
       "/etc/kube-lab/kubelet-csr-approver.yaml" = templatefile("${local.templates_dir}/kubelet-csr-approver.yaml.tftpl", {
-        version    = local.sw.csr_approver.version
-        digest     = local.sw.csr_approver.digest
+        version    = var.software.csr_approver.version
+        digest     = var.software.csr_approver.digest
         node_cidrs = var.node_cidrs
       })
       "/usr/local/sbin/kube-lab-refresh-join"             = file("${local.files_dir}/refresh-join.sh")
       "/etc/systemd/system/kube-lab-refresh-join.service" = file("${local.files_dir}/kube-lab-refresh-join.service")
       "/etc/systemd/system/kube-lab-refresh-join.timer"   = file("${local.files_dir}/kube-lab-refresh-join.timer")
     },
-    local.sw.cni == "calico" ? {
+    var.software.cni == "calico" ? {
       "/etc/kube-lab/calico-installation.yaml" = templatefile("${local.templates_dir}/calico-installation.yaml.tftpl", {
-        pod_cidr = local.sw.pod_cidr
+        pod_cidr = var.software.pod_cidr
       })
     } : {},
   )
@@ -87,12 +92,12 @@ locals {
     )
   }
 
-  executables = ["/usr/local/sbin/kube-lab-refresh-join"]
-
-  # Everything else may hold cluster secrets once rendered, so it is root-only.
-  file_mode = { for path in distinct(flatten([for f in values(local.files) : keys(f)])) : path => (
-    contains(local.executables, path) ? "0700" : startswith(path, "/etc/systemd/") ? "0644" : "0600"
-  ) }
+  # Files not listed here hold, or will hold, cluster secrets, so they are root-only 0600.
+  file_modes = {
+    "/usr/local/sbin/kube-lab-refresh-join"             = "0700"
+    "/etc/systemd/system/kube-lab-refresh-join.service" = "0644"
+    "/etc/systemd/system/kube-lab-refresh-join.timer"   = "0644"
+  }
 
   cloud_config = {
     for k, n in var.nodes : k => "#cloud-config\n${yamlencode({
@@ -104,7 +109,7 @@ locals {
           path        = path
           content     = local.files[k][path]
           owner       = "root:root"
-          permissions = local.file_mode[path]
+          permissions = lookup(local.file_modes, path, "0600")
         }
       ]
     })}"

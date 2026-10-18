@@ -5,6 +5,7 @@ mock_provider "aws" {
 
 variables {
   name           = "kube-lab-test"
+  cidr           = "10.10.0.0/16"
   instance_types = ["t3.medium", "m7i.large"]
 }
 

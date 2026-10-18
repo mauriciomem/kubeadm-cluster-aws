@@ -1,6 +1,6 @@
 variable "az_count" {
-  description = "Maximum number of availability zones to spread subnets across."
   type        = number
+  description = "Maximum number of availability zones to spread subnets across."
   default     = 3
 
   validation {
@@ -10,19 +10,18 @@ variable "az_count" {
 }
 
 variable "cidr" {
-  description = "VPC CIDR block. Private subnets are /20s and public subnets /24s carved from a /16."
   type        = string
-  default     = "10.10.0.0/16"
+  description = "VPC CIDR block with a prefix length of 16 or less. Private subnets get prefix + 4 (/20 in a /16), public subnets prefix + 8 (/24 in a /16)."
 
   validation {
-    condition     = can(cidrhost(var.cidr, 0)) && tonumber(split("/", var.cidr)[1]) <= 16
-    error_message = "cidr must be a valid IPv4 CIDR with a prefix of /16 or larger."
+    condition     = can(cidrhost(var.cidr, 0)) && try(tonumber(split("/", var.cidr)[1]) <= 16, false)
+    error_message = "cidr must be a valid IPv4 CIDR with a prefix length of 16 or less, such as 10.10.0.0/16."
   }
 }
 
 variable "instance_types" {
-  description = "EC2 instance types the nodes use. Only AZs offering all of them get subnets."
   type        = list(string)
+  description = "EC2 instance types the nodes use. Only AZs offering all of them get subnets."
 
   validation {
     condition     = length(var.instance_types) > 0
@@ -31,18 +30,18 @@ variable "instance_types" {
 }
 
 variable "name" {
-  description = "Name used for the VPC and as a prefix for its resources."
   type        = string
+  description = "Name used for the VPC and as a prefix for its resources."
 }
 
 variable "single_nat_gateway" {
-  description = "Use one NAT gateway for all AZs (cheaper) instead of one per AZ."
   type        = bool
+  description = "Use one NAT gateway for all AZs (cheaper) instead of one per AZ."
   default     = true
 }
 
 variable "tags" {
-  description = "Tags applied to every resource in the module."
   type        = map(string)
+  description = "Tags applied to every resource in the module."
   default     = {}
 }

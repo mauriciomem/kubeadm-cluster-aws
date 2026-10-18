@@ -1,39 +1,38 @@
 variable "api_endpoint" {
-  description = "Kubernetes API host:port (the NLB)."
   type        = string
+  description = "Kubernetes API as host:port (the NLB). Becomes kubeadm's controlPlaneEndpoint."
 }
 
 variable "api_host" {
-  description = "Kubernetes API host name (the NLB DNS name), added to the API server certificate."
   type        = string
+  description = "NLB DNS name, listed in the API server certificate's SANs. kubeadm adds the controlPlaneEndpoint host anyway; the explicit entry shows learners where it comes from."
 }
 
 variable "cluster_name" {
-  description = "Cluster name."
   type        = string
+  description = "Cluster name."
 }
 
 variable "node_cidrs" {
-  description = "Private subnet CIDRs the nodes live in; the kubelet serving-cert approver accepts only these IPs."
   type        = list(string)
+  description = "Private subnet CIDRs the nodes live in. The kubelet serving-certificate approver only accepts IPs inside them."
 }
 
 variable "nodes" {
-  description = "Nodes keyed by name, as passed to the cluster module."
   type = map(object({
     role  = string
     index = number
     init  = bool
   }))
+  description = "Nodes keyed by name, as passed to the cluster module."
 }
 
 variable "region" {
-  description = "AWS region, for the AWS CLI on the nodes."
   type        = string
+  description = "AWS region, for the AWS CLI on the nodes."
 }
 
 variable "software" {
-  description = "Software versions, checksums and Kubernetes networking (see the cluster module's bootstrap variable)."
   type = object({
     k8s_version        = string
     containerd_version = string
@@ -59,9 +58,10 @@ variable "software" {
       digest  = string
     })
   })
+  description = "Versions, checksums and CIDRs for the node scripts. Same shape as the cluster module's software variable."
 }
 
 variable "ssm_prefix" {
-  description = "SSM Parameter Store path for this cluster."
   type        = string
+  description = "SSM Parameter Store path for this cluster."
 }

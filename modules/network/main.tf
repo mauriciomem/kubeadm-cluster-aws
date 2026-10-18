@@ -26,7 +26,8 @@ locals {
   ]
   azs = slice(local.eligible_azs, 0, min(var.az_count, length(local.eligible_azs)))
 
-  # Private /20s start at the bottom of the range, public /24s at .100 so they never collide.
+  # In a /16: private /20s start at the bottom of the range, public /24s at x.x.100.0,
+  # so they never collide. scripts/render-templates.sh repeats the private carving.
   private_subnets = [for i in range(length(local.azs)) : cidrsubnet(var.cidr, 4, i)]
   public_subnets  = [for i in range(length(local.azs)) : cidrsubnet(var.cidr, 8, 100 + i)]
 }
@@ -42,8 +43,11 @@ module "vpc" {
   private_subnets = local.private_subnets
   public_subnets  = local.public_subnets
 
-  enable_nat_gateway = true
-  single_nat_gateway = var.single_nat_gateway
+  # Spelled out as the VPC module documents it: without one_nat_gateway_per_az the module
+  # creates one NAT gateway per private subnet, which only equals one per AZ by coincidence.
+  enable_nat_gateway     = true
+  single_nat_gateway     = var.single_nat_gateway
+  one_nat_gateway_per_az = !var.single_nat_gateway
 
   enable_dns_hostnames = true
   enable_dns_support   = true

@@ -53,6 +53,7 @@ resource "aws_vpc_security_group_ingress_rule" "nlb_operator" {
 
 # The NLB DNS name resolves to public IPs even inside the VPC, so node traffic
 # (joins, kube-proxy, workers' kubelets) arrives from the NAT gateway address.
+# count, not for_each: the NAT IPs are unknown until apply, and for_each keys must be known at plan.
 resource "aws_vpc_security_group_ingress_rule" "nlb_nat" {
   count = length(var.nat_public_ips)
 
@@ -64,6 +65,8 @@ resource "aws_vpc_security_group_ingress_rule" "nlb_nat" {
   cidr_ipv4         = "${var.nat_public_ips[count.index]}/32"
 }
 
+# For ICMP, from_port is the type and to_port the code:
+# type 3 (destination unreachable), code 4 (fragmentation needed).
 resource "aws_vpc_security_group_ingress_rule" "nlb_pmtud" {
   security_group_id = aws_security_group.nlb.id
   description       = "Path MTU discovery (ICMP fragmentation needed)"

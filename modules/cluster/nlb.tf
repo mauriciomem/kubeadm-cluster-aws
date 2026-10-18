@@ -1,4 +1,8 @@
-# Internet-facing by design so kubectl works without a VPN; the security group admits only
+locals {
+  control_planes = { for k, n in var.nodes : k => n if n.role == "control-plane" }
+}
+
+# Internet-facing so kubectl works without a VPN. The security group admits only
 # operator_cidrs and the NAT IPs on 6443.
 # trivy:ignore:AWS-0053
 resource "aws_lb" "api" {
@@ -26,6 +30,8 @@ resource "aws_lb_target_group" "api" {
   preserve_client_ip   = "false"
   deregistration_delay = 30
 
+  tags = var.tags
+
   health_check {
     protocol            = "TCP"
     port                = "traffic-port"
@@ -33,21 +39,18 @@ resource "aws_lb_target_group" "api" {
     healthy_threshold   = 2
     unhealthy_threshold = 2
   }
-
-  tags = var.tags
 }
 
 resource "aws_lb_listener" "api" {
   load_balancer_arn = aws_lb.api.arn
   port              = 6443
   protocol          = "TCP"
+  tags              = var.tags
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
   }
-
-  tags = var.tags
 }
 
 resource "aws_lb_target_group_attachment" "control_plane" {

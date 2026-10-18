@@ -29,7 +29,7 @@ run "defaults_one_control_plane_two_workers" {
   }
 
   assert {
-    condition     = keys(module.cluster.instances) == ["cp-1", "worker-1", "worker-2"]
+    condition     = keys(module.cluster.nodes) == ["cp-1", "worker-1", "worker-2"]
     error_message = "The cluster module should create one instance per node."
   }
 

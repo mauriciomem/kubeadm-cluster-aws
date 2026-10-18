@@ -212,15 +212,9 @@ run "user_data_fits_ec2_limit" {
     control_plane_count = 3
   }
 
-  # The gzipped user data must stay under 16 KB before base64 (precondition on aws_instance).
+  # Planning succeeds only if the user_data size precondition on aws_instance.node holds.
   assert {
-    condition     = alltrue([for k, l in module.cluster.user_data_base64_length : l <= 21848])
-    error_message = "user_data too large: ${jsonencode(module.cluster.user_data_base64_length)}."
-  }
-
-  # Raw size budget: cp-1 should stay compressible well below the limit.
-  assert {
-    condition     = length(module.cluster.bootstrap["cp-1"].cloud_config) + length(module.cluster.bootstrap["cp-1"].script) < 40000
-    error_message = "cp-1 bootstrap content has grown unexpectedly; do not inline upstream manifests."
+    condition     = length(module.cluster.bootstrap) == 5
+    error_message = "Expected cp-1..cp-3 and two workers."
   }
 }

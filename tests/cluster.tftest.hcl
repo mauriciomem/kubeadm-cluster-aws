@@ -13,6 +13,7 @@ variables {
   private_subnet_ids          = ["subnet-a", "subnet-b", "subnet-c"]
   private_subnet_cidrs        = ["10.10.0.0/20", "10.10.16.0/20", "10.10.32.0/20"]
   public_subnet_ids           = ["subnet-pa", "subnet-pb", "subnet-pc"]
+  root_volume_size            = 30
 
   nodes = {
     cp-1     = { role = "control-plane", index = 0, init = true }

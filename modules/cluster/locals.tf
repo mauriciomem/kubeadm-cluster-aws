@@ -1,16 +1,11 @@
-data "aws_caller_identity" "current" {}
-
-data "aws_partition" "current" {}
-
-data "aws_region" "current" {}
-
 locals {
-  region         = data.aws_region.current.region
-  ssm_prefix     = "/${var.cluster_name}"
-  ssm_prefix_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.region}:${data.aws_caller_identity.current.account_id}:parameter${local.ssm_prefix}"
+  region = data.aws_region.current.region
 
-  control_planes = { for k, n in var.nodes : k => n if n.role == "control-plane" }
+  # Join material, the admin kubeconfig and bootstrap status all live under this path.
+  # docs/architecture.md lists every parameter and who reads and writes it.
+  ssm_prefix = "/${var.cluster_name}"
 
+  # The API load balancer, as kubeadm expects it: controlPlaneEndpoint is host:port.
   api_host     = aws_lb.api.dns_name
   api_endpoint = "${local.api_host}:6443"
 }

@@ -1,8 +1,11 @@
 locals {
   cluster_name = "${var.name_prefix}-${random_string.suffix.result}"
-  tags         = { Cluster = local.cluster_name }
+  # Passed to the modules rather than default_tags; providers.tf explains why.
+  cluster_tags = { Cluster = local.cluster_name }
 
   # Stable keys: scaling worker_count from 2 to 3 adds worker-3 and touches nothing else.
+  # init marks the one node that runs kubeadm init. The kubelet-csr-approver template
+  # only accepts these names (cp-N, worker-N), so keep the two in sync.
   cp_keys     = [for i in range(var.control_plane_count) : "cp-${i + 1}"]
   worker_keys = [for i in range(var.worker_count) : "worker-${i + 1}"]
   nodes = merge(
@@ -10,6 +13,8 @@ locals {
     { for i, k in local.worker_keys : k => { role = "worker", index = i, init = false } },
   )
 
+  # What the node scripts install and pass to kubeadm. The nodes read it only when they
+  # are created (see docs/configuration.md).
   software = {
     k8s_version        = var.k8s_version
     containerd_version = var.containerd_version

@@ -12,7 +12,7 @@ module "network" {
   single_nat_gateway = var.single_nat_gateway
   # Only AZs that offer both instance types, so no node lands where it can't launch.
   instance_types = distinct([var.control_plane_instance_type, var.worker_instance_type])
-  tags           = local.tags
+  tags           = local.cluster_tags
 }
 
 module "cluster" {
@@ -33,16 +33,22 @@ module "cluster" {
   public_subnet_ids    = module.network.public_subnet_ids
   nat_public_ips       = module.network.nat_public_ips
 
-  tags = local.tags
+  tags = local.cluster_tags
 }
 
 # Opt-in: block `terraform apply` until the cluster reports ready (needs bash and the AWS CLI locally).
+# It runs once, when cp-1 is created. Nodes added later are not waited for.
 resource "terraform_data" "wait_for_cluster" {
   count = var.wait_for_cluster ? 1 : 0
 
-  triggers_replace = [module.cluster.instances[local.cp_keys[0]].instance_id]
+  triggers_replace = [module.cluster.nodes[local.cp_keys[0]].instance_id]
 
   provisioner "local-exec" {
-    command = "${path.module}/scripts/wait-for-cluster.sh ${local.cluster_name} ${var.region}"
+    # Values go through the environment, so the shell never parses them as code.
+    command = "${path.module}/scripts/wait-for-cluster.sh \"$CLUSTER\" \"$REGION\""
+    environment = {
+      CLUSTER = local.cluster_name
+      REGION  = var.region
+    }
   }
 }

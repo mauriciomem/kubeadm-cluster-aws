@@ -1,12 +1,12 @@
 variable "ami_id" {
-  description = "AMI override for all nodes. Null uses the latest Canonical Ubuntu 24.04 amd64 image."
   type        = string
+  description = "AMI override for all nodes. Null uses the latest Canonical Ubuntu 24.04 amd64 image."
   default     = null
 }
 
 variable "calico_crds_sha256" {
-  description = "sha256 of Calico's v3_projectcalico_org.yaml for calico_version."
   type        = string
+  description = "sha256 of Calico's v3_projectcalico_org.yaml for calico_version."
   default     = "5306c2c6d9fd6762d804f9da51c049b8269c33498a364c5df0eed555aba026bd"
 
   validation {
@@ -16,8 +16,8 @@ variable "calico_crds_sha256" {
 }
 
 variable "calico_operator_sha256" {
-  description = "sha256 of Calico's tigera-operator.yaml for calico_version."
   type        = string
+  description = "sha256 of Calico's tigera-operator.yaml for calico_version."
   default     = "aef423b36aef8cf86567f92bbe5eea4b4ca105a6fc7dbf43de599c6fa70388ba"
 
   validation {
@@ -27,14 +27,14 @@ variable "calico_operator_sha256" {
 }
 
 variable "calico_version" {
-  description = "Calico release (tag of projectcalico/calico)."
   type        = string
+  description = "Calico release (tag of projectcalico/calico)."
   default     = "v3.33.0"
 }
 
 variable "cilium_cli_sha256" {
-  description = "sha256 of cilium-linux-amd64.tar.gz for cilium_cli_version."
   type        = string
+  description = "sha256 of cilium-linux-amd64.tar.gz for cilium_cli_version."
   default     = "24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61"
 
   validation {
@@ -44,20 +44,20 @@ variable "cilium_cli_sha256" {
 }
 
 variable "cilium_cli_version" {
-  description = "cilium-cli release used to install Cilium."
   type        = string
+  description = "cilium-cli release used to install Cilium."
   default     = "v0.20.1"
 }
 
 variable "cilium_version" {
-  description = "Cilium version (Helm chart version, no leading v)."
   type        = string
+  description = "Cilium version (Helm chart version, no leading v)."
   default     = "1.20.3"
 }
 
 variable "cni" {
-  description = "CNI plugin: calico (default; tested on 1.36 and 1.37) or cilium."
   type        = string
+  description = "CNI plugin: calico (default; tested on 1.36 and 1.37) or cilium."
   default     = "calico"
 
   validation {
@@ -67,14 +67,14 @@ variable "cni" {
 }
 
 variable "containerd_version" {
-  description = "containerd.io apt version pattern from Docker's repository."
   type        = string
+  description = "containerd.io apt version pattern from Docker's repository."
   default     = "2.3.*"
 }
 
 variable "control_plane_count" {
-  description = "Number of control-plane nodes. Must be odd so etcd keeps quorum."
   type        = number
+  description = "Number of control-plane nodes. Must be odd so etcd keeps quorum."
   default     = 1
 
   validation {
@@ -84,14 +84,14 @@ variable "control_plane_count" {
 }
 
 variable "control_plane_instance_type" {
-  description = "EC2 instance type for control-plane nodes (amd64; kubeadm needs at least 2 vCPU and 2 GiB)."
   type        = string
+  description = "EC2 instance type for control-plane nodes (amd64; kubeadm needs at least 2 vCPU and 2 GiB)."
   default     = "t3.medium"
 }
 
 variable "csr_approver_digest" {
-  description = "Image index digest of ghcr.io/postfinance/kubelet-csr-approver:<csr_approver_version>."
   type        = string
+  description = "Image index digest of ghcr.io/postfinance/kubelet-csr-approver:<csr_approver_version>."
   default     = "sha256:6469ef517d2b6d3cb108fce8a913483533a48b1cd78b5d4af307fa09e04a7818"
 
   validation {
@@ -101,14 +101,14 @@ variable "csr_approver_digest" {
 }
 
 variable "csr_approver_version" {
-  description = "kubelet-csr-approver release, which approves kubelet serving certificates."
   type        = string
+  description = "kubelet-csr-approver release, which approves kubelet serving certificates."
   default     = "v1.2.15"
 }
 
 variable "k8s_version" {
-  description = "Kubernetes version (kubeadm, kubelet, kubectl and control plane)."
   type        = string
+  description = "Kubernetes version (kubeadm, kubelet, kubectl and control plane)."
   default     = "1.36.5"
 
   validation {
@@ -118,8 +118,8 @@ variable "k8s_version" {
 }
 
 variable "metrics_server_sha256" {
-  description = "sha256 of metrics-server components.yaml for metrics_server_version."
   type        = string
+  description = "sha256 of metrics-server components.yaml for metrics_server_version."
   default     = "1cec29a5267809306a2c6ec74a3e449abbb705b4a8beed0c8a1963910f72c79b"
 
   validation {
@@ -129,14 +129,14 @@ variable "metrics_server_sha256" {
 }
 
 variable "metrics_server_version" {
-  description = "metrics-server release."
   type        = string
+  description = "metrics-server release."
   default     = "v0.9.0"
 }
 
 variable "name_prefix" {
-  description = "Prefix for the cluster name; a random 4-character suffix is appended."
   type        = string
+  description = "Prefix for the cluster name; a random 4-character suffix is appended."
   default     = "kube-lab"
 
   validation {
@@ -147,8 +147,8 @@ variable "name_prefix" {
 }
 
 variable "operator_cidrs" {
-  description = "Public IPv4 CIDRs allowed to reach the Kubernetes API, e.g. [\"203.0.113.10/32\"]."
   type        = list(string)
+  description = "Public IPv4 CIDRs allowed to reach the Kubernetes API, e.g. [\"203.0.113.10/32\"]."
 
   validation {
     condition     = length(var.operator_cidrs) > 0
@@ -170,8 +170,8 @@ variable "operator_cidrs" {
 }
 
 variable "pod_cidr" {
-  description = "Pod network CIDR (kubeadm podSubnet, used by both Calico and Cilium)."
   type        = string
+  description = "Pod network CIDR (kubeadm podSubnet, used by both Calico and Cilium)."
   default     = "192.168.0.0/16"
 
   validation {
@@ -185,14 +185,14 @@ variable "pod_cidr" {
 }
 
 variable "region" {
-  description = "AWS region."
   type        = string
+  description = "AWS region."
   default     = "us-east-1"
 }
 
 variable "root_volume_size" {
-  description = "Root EBS volume size in GiB for every node."
   type        = number
+  description = "Root EBS volume size in GiB for every node."
   default     = 30
 
   validation {
@@ -202,8 +202,8 @@ variable "root_volume_size" {
 }
 
 variable "service_cidr" {
-  description = "Service CIDR (kubeadm serviceSubnet)."
   type        = string
+  description = "Service CIDR (kubeadm serviceSubnet)."
   default     = "10.96.0.0/12"
 
   validation {
@@ -226,20 +226,20 @@ variable "service_cidr" {
 }
 
 variable "single_nat_gateway" {
-  description = "Use one NAT gateway for all AZs (cheaper; set false for one per AZ)."
   type        = bool
+  description = "Use one NAT gateway for all AZs (cheaper; set false for one per AZ)."
   default     = true
 }
 
 variable "tags" {
-  description = "Extra tags applied to every AWS resource."
   type        = map(string)
+  description = "Extra tags applied to every AWS resource."
   default     = {}
 }
 
 variable "vpc_cidr" {
-  description = "VPC CIDR. Must not overlap pod_cidr or service_cidr (kubeadm's default service range is 10.96.0.0/12)."
   type        = string
+  description = "VPC CIDR. Must not overlap pod_cidr or service_cidr (kubeadm's default service range is 10.96.0.0/12)."
   default     = "10.10.0.0/16"
 
   validation {
@@ -249,14 +249,14 @@ variable "vpc_cidr" {
 }
 
 variable "wait_for_cluster" {
-  description = "Make terraform apply wait until the cluster reports ready (runs scripts/wait-for-cluster.sh locally)."
   type        = bool
+  description = "Make terraform apply wait until the cluster reports ready (runs scripts/wait-for-cluster.sh locally)."
   default     = false
 }
 
 variable "worker_count" {
-  description = "Number of worker nodes. With 0, workloads schedule on the control planes."
   type        = number
+  description = "Number of worker nodes. With 0, workloads schedule on the control planes."
   default     = 2
 
   validation {
@@ -266,7 +266,7 @@ variable "worker_count" {
 }
 
 variable "worker_instance_type" {
-  description = "EC2 instance type for worker nodes (amd64)."
   type        = string
+  description = "EC2 instance type for worker nodes (amd64)."
   default     = "t3.medium"
 }
