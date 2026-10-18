@@ -102,7 +102,7 @@ variable "containerd_version" {
 
 variable "control_plane_count" {
   type        = number
-  description = "Number of control-plane nodes. Must be odd so etcd keeps quorum. Read docs/operations.md before you lower it on a running cluster."
+  description = "Number of control-plane nodes: 1, 3, 5 or 7 (odd, so etcd keeps quorum). Read docs/operations.md before you lower it on a running cluster."
   default     = 1
 
   validation {
@@ -119,7 +119,7 @@ variable "control_plane_instance_type" {
 
 variable "csr_approver_digest" {
   type        = string
-  description = "Image index digest of ghcr.io/postfinance/kubelet-csr-approver:<csr_approver_version>."
+  description = "Image index digest of ghcr.io/postfinance/kubelet-csr-approver for csr_approver_version."
   default     = "sha256:6469ef517d2b6d3cb108fce8a913483533a48b1cd78b5d4af307fa09e04a7818"
 
   validation {
@@ -186,7 +186,7 @@ variable "name_prefix" {
 
 variable "operator_cidrs" {
   type        = list(string)
-  description = "Public IPv4 CIDRs allowed to reach the Kubernetes API, for example [\"203.0.113.10/32\"]."
+  description = "Public IPv4 CIDRs allowed to reach the Kubernetes API, for example [\"203.0.113.10/32\"]. Each prefix must be /8 or longer."
 
   validation {
     condition     = length(var.operator_cidrs) > 0
@@ -238,7 +238,7 @@ variable "region" {
 
 variable "root_volume_size" {
   type        = number
-  description = "Root EBS volume size in GiB for every node."
+  description = "Root EBS volume size in GiB for every node, at least 20. EBS volumes can grow but not shrink."
   default     = 30
 
   validation {
@@ -302,7 +302,7 @@ variable "wait_for_cluster" {
 
 variable "worker_count" {
   type        = number
-  description = "Number of worker nodes. With 0, workloads run on the control planes."
+  description = "Number of worker nodes, from 0 to 20. With 0, workloads run on the control planes."
   default     = 2
 
   validation {

@@ -1,12 +1,16 @@
-# Copy to terraform.tfvars (git-ignored) and adjust.
+# Copy this file to terraform.tfvars (git ignores it) and edit the copy.
 
-# Required: public IPv4 CIDRs allowed to reach the Kubernetes API.
-# Find your address with your network admin or a "what is my IP" service, then use /32.
+# Required. Your public IPv4 address as a /32. Only these addresses can reach the API.
+# Find it with:  curl -4 -s https://checkip.amazonaws.com
+# If your address changes (another network, a VPN), update this and run terraform apply.
 operator_cidrs = ["203.0.113.10/32"]
 
-# Optional overrides (defaults shown).
+# Optional. The values shown are the defaults.
 # region              = "us-east-1"
 # control_plane_count = 1
 # worker_count        = 2
-# cni                 = "calico"
-# k8s_version         = "1.36.5"
+
+# Read only when the cluster or a node is created. Changing them later doesn't change
+# existing nodes; docs/configuration.md explains when each setting takes effect.
+# cni         = "calico"
+# k8s_version = "1.36.5"
