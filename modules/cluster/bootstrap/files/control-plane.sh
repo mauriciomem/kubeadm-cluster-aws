@@ -149,6 +149,12 @@ all_nodes_ready() {
 # 30 minutes is generous (the first live run took about four); it only bounds a stuck boot.
 wait_for_all_nodes_ready() {
   wait_for 1800 "$EXPECTED_NODES nodes Ready" all_nodes_ready
+  # CoreDNS scheduled while cp-1 was the only node, so both replicas sit on it, and stopping
+  # cp-1 takes cluster DNS down until they're evicted (about 6 minutes in the HA test). A
+  # restart now lets kubeadm's anti-affinity spread them. Not fatal: DNS works either way.
+  kubectl -n kube-system rollout restart deployment/coredns &&
+    kubectl -n kube-system rollout status deployment/coredns --timeout=5m ||
+    log "CoreDNS did not restart cleanly; both replicas may still run on cp-1"
   # Not fatal: nodes work without metrics, and a stuck rollout points at kubelet serving CSRs.
   kubectl -n kube-system rollout status deployment/metrics-server --timeout=5m ||
     log "metrics-server is not ready yet; check 'kubectl get csr' and the kubelet-csr-approver logs"

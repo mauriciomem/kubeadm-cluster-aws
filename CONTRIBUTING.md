@@ -52,7 +52,8 @@ In CI the Trivy job is advisory: it reports findings without failing the build.
 ## Tests
 
 `terraform test` runs the files in `tests/` against mocked AWS providers, so it needs no
-credentials and creates nothing.
+credentials and creates nothing. It also reads your `terraform.tfvars`, and the tests expect
+the defaults, so move that file aside while you run them.
 
 | File | What it covers |
 |---|---|
