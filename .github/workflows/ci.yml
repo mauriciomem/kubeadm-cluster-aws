@@ -65,7 +65,7 @@ jobs:
         run: terraform test
 
   shellcheck:
-    name: render + shellcheck
+    name: shellcheck, kubeadm config
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,18 +85,15 @@ jobs:
           tar -xJf "$tarball" --strip-components=1 "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
           sudo install -m 0755 shellcheck /usr/local/bin/shellcheck
 
-      # Renders two topologies (Calico with workers; Cilium, 3 control planes, no workers).
-      - name: render and shellcheck
+      # The node scripts reach the nodes unchanged, so they are checked as they are in the repo.
+      # -x follows their source directives into lib.sh and cluster.env.tftpl.
+      - name: shellcheck
         run: |
           shellcheck --version
-          shellcheck -S warning scripts/*.sh
-          for args in "" "-var cni=cilium -var control_plane_count=3 -var worker_count=0"; do
-            # shellcheck disable=SC2086 # word splitting of args is intended
-            ./scripts/render-templates.sh $args
-            shellcheck -S warning build/*.sh
-          done
+          shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh
 
-      # Pinned kubeadm checks the rendered init and join configs, including the taints: [] variants.
+      # Renders three layouts with render-templates.sh, then the pinned kubeadm checks every
+      # init and join config, including the taints: [] variants.
       - name: kubeadm config validate
         run: ./scripts/validate-kubeadm-config.sh
 

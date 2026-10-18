@@ -25,18 +25,23 @@ Run these from the repository root before you open a pull request. CI runs the s
 terraform fmt -check -recursive
 terraform init -backend=false && terraform validate
 tflint --init && tflint --recursive
-./scripts/render-templates.sh && shellcheck -S warning scripts/*.sh build/*.sh
+shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh
+./scripts/render-templates.sh
 terraform test
 trivy config --quiet --severity HIGH,CRITICAL .
 ./scripts/validate-kubeadm-config.sh
 ```
 
-`render-templates.sh` renders each node's cloud-init content into `build/` from the root
-module's own values and prints the raw and gzipped sizes. EC2 caps user data at 16 KB, and a
-precondition fails the plan if a node goes over. The script also writes flat copies of the node
-scripts to `build/*.sh` for ShellCheck. Pass `-var` flags to render other layouts, for example
+ShellCheck reads the node scripts straight from `modules/cluster/bootstrap/files`, because they
+reach the nodes unchanged. `-x` lets it follow their `source` lines into `lib.sh` and
+`templates/cluster.env.tftpl`, so it knows every function and variable they use.
+
+`render-templates.sh` renders each node's cloud-init content into `build/nodes/` from the root
+module's own values and prints the raw and gzipped sizes. EC2 caps user data at 16 KB before
+base64 encoding. The user data is gzipped, so the gzip column is the one that counts, and a
+precondition fails the plan if a node goes over. Pass `-var` flags to render
+other layouts, for example
 `./scripts/render-templates.sh -var cni=cilium -var control_plane_count=3 -var worker_count=0`.
-CI renders that layout and the default one.
 
 `validate-kubeadm-config.sh` renders three layouts and runs `kubeadm config validate` on every
 kubeadm config, with the kubeadm version the nodes install. On macOS without Docker it skips

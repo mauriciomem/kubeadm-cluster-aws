@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Renders the node bootstrap content into build/ for shellcheck and size checks.
+# Renders the node bootstrap content into build/nodes/ and prints each node's user data size.
+# validate-kubeadm-config.sh uses it to get the kubeadm configs it checks.
 # Needs no AWS credentials (terraform init still downloads providers). Inputs come from
 # the root module through terraform console, so this sees the same node map and pins as
 # a real apply. Only the NLB DNS name and the cluster suffix are fake.
@@ -15,7 +16,7 @@ state="$build/render.tfstate"
 
 cd "$repo_root"
 mkdir -p "$build"
-rm -rf "${build:?}/nodes" "$build"/*.sh
+rm -rf "${build:?}/nodes"
 
 terraform init -backend=false -input=false >/dev/null
 # operator_cidrs is a placeholder for the required variable. node_cidrs repeats the
@@ -39,13 +40,6 @@ for node in $(jq -r 'keys[]' "$build/nodes.json"); do
     mkdir -p "$dir/files$(dirname "$path")"
     jq -j --arg n "$node" --arg p "$path" '.[$n].files[$p]' "$build/nodes.json" >"$dir/files$path"
   done
-
-  # Flat .sh copies so `shellcheck build/*.sh` covers every shell file a node receives.
-  cp "$dir/bootstrap.sh" "$build/$node-bootstrap.sh"
-  cp "$dir/files/etc/kube-lab/lib.sh" "$build/$node-lib.sh"
-  if [[ -f $dir/files/usr/local/sbin/kube-lab-refresh-join ]]; then
-    cp "$dir/files/usr/local/sbin/kube-lab-refresh-join" "$build/$node-refresh-join.sh"
-  fi
 done
 
 # EC2 limits user data to 16384 bytes before base64. The MIME wrapper adds well under 1 KB.
