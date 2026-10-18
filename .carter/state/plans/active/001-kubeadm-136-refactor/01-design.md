@@ -1,6 +1,8 @@
 # kube-cluster refactor: target architecture (carter-architect, 2026-10-16)
 
 Scope: an implementation-ready design for a learning-only kubeadm cluster on EC2. The operator decisions in `00-context.md` are taken as given.
+> The code differs from this design in places. See "Implementation notes (as built)" at the end; the code and `docs/` are the source of truth.
+
 Legend: ✅ verified against an official source this session (URL inline) · ⚠️ not verified, so check during implementation or apply.
 
 ## 0. Findings that change the brief (read first)
@@ -359,3 +361,40 @@ There is also a one-off NAT data processing charge of $0.045/GB (about 2–3 GB 
 
 ## 14. Explicitly not doing (YAGNI)
 Route53 private zone or `/etc/hosts` endpoint tricks (F3 makes them unnecessary) · ASGs or launch templates (static named nodes suit labs) · remote state · AWS cloud controller or EBS CSI · Kubernetes/Helm TF providers · Hubble, Goldmane, or Whisker by default · audit policy, PSA, encryption-at-rest (CKS student work, decision 11).
+
+## Implementation notes (as built)
+
+Added after the audit of main @ 36def8e and the phase-1 fixes. The sections above are kept as
+the original design.
+
+- File tree (§1): Every module has `terraform.tf`, not `versions.tf`. `modules/cluster/nodes.tf`
+  became `main.tf`. Bootstrap rendering lives in a provider-less submodule,
+  `modules/cluster/bootstrap`, with `files/` (scripts and units copied verbatim: `lib.sh`,
+  `control-plane.sh`, `worker.sh`, `refresh-join.sh`, the systemd units) and `templates/`
+  (`cluster.env`, kubeadm init/join, Calico Installation, kubelet-csr-approver). There is no
+  `common.sh.tftpl`, `cloud-config.yaml.tftpl` or `refresh-join.sh.tftpl`; the cloud-config is
+  built with `yamlencode` in `bootstrap/main.tf`. Tests also include `cluster.tftest.hcl`,
+  `network.tftest.hcl` and the `tests/render` harness used by `scripts/render-templates.sh` and
+  `scripts/validate-kubeadm-config.sh`.
+- Status values (§3.1): As built, nodes go `pending → bootstrapping → waiting → joining →
+  joined`; cp-1 goes `pending → bootstrapping → initializing → initialized → joined`; the
+  cluster goes `pending → installing → ready`. `installing` is a cluster status, not a node
+  status. `docs/architecture.md` has the full table.
+- IAM (§6.3): `AmazonSSMManagedInstanceCore` is not attached. Both roles get an inline
+  Session Manager policy instead. The control-plane role has `ssm:GetParameter`,
+  `ssm:GetParameters` and `ssm:PutParameter` on `/<cluster>/*`, without
+  `ssm:GetParametersByPath`. The inline policy still includes six `ec2messages` actions; whether
+  sessions need them is open until the e2e (plan R9).
+- Host prep (§9): The container-runtimes page only documents `net.ipv4.ip_forward`. The
+  `br_netfilter` module and the `bridge-nf-call-*` sysctls are kept, but the ✅ on them above is
+  wrong.
+- Upgrade lab (§9): The 1.36 → 1.37 procedure is on the current kubernetes.io page, not the
+  v1-36 site, and the other nodes must upgrade the kubeadm package before `kubeadm upgrade node`.
+  See `docs/labs/upgrade.md`.
+- Outputs (§10): The URL output is `api_url`. Inside the modules, `api_endpoint` stays
+  `host:port`, as kubeadm uses the word. The module output `instances` became `nodes`.
+- Validations (§2.2): Version pins, `region`, `ami_id` and node roles are validated too, and a
+  precondition rejects non-x86_64 instance types.
+- Tests (§11): The CNI tests assert on the `CNI=` line in `cluster.env` and on which
+  manifests ship, because both installers live in `control-plane.sh`.
+

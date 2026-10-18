@@ -197,3 +197,22 @@ Watch-list (below top 8): `envsubst`/`gettext-base` present (installed explicitl
 
 ## Definition of done
 All MH1–MH11 are ticked with evidence (command output pasted into the P8/P9 notes), the final commit exists with no state in git, and the cluster is destroyed and confirmed leftover-free.
+
+## Implementation notes (as built)
+
+Added after the audit of main @ 36def8e and the phase-1 fixes. The steps above are kept as
+planned.
+
+- P2/P3 file lists: see the as-built notes at the end of `01-design.md`. `nodes.tf` is now
+  `modules/cluster/main.tf`, and the bootstrap lives in `modules/cluster/bootstrap`.
+- P2 IAM: the control-plane role has Get/GetParameters/Put on `/<cluster>/*`, no
+  `GetParametersByPath`, and no `AmazonSSMManagedInstanceCore` attachment.
+- P5 MH2: `cni = "cilium"` passing `terraform test` now means `cluster.env` selects Cilium and
+  no Calico manifest ships. It does not prove Cilium works on a live cluster.
+- P6: the README was split into `README.md` plus `docs/` (architecture, configuration,
+  operations, troubleshooting, costs, labs) and `CONTRIBUTING.md`. MH10 is covered across
+  those files.
+- P7 gate: tflint now runs the full rule set, including `terraform_standard_module_structure`.
+- Open: R9 (are the `ec2messages` actions needed?) and the bootstrap-script findings deferred
+  to phase 2 depend on the e2e result.
+
