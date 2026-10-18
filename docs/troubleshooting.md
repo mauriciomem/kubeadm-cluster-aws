@@ -45,15 +45,18 @@ sleep 30 | aws ssm start-session --region "$(terraform output -raw region)" --ta
   --parameters command="sudo tail -n 200 /var/log/kube-lab-bootstrap.log"
 ```
 
-Three things to know:
+Four things to know:
 
 - The session ends when its input closes, before the output arrives. `sleep 30 |` keeps it
   open; use a longer sleep for slower commands.
 - The command runs as `ssm-user`, whose `PATH` doesn't include `/snap/bin`. To run the AWS
   CLI on the node, call it as `/snap/bin/aws`.
-- If the command needs complicated quoting, put the parameters in a file, such as
-  `{"command": ["sudo journalctl -u kubelet --no-pager -n 100"]}` in `params.json`, and pass
-  `--parameters file://params.json`.
+- No shell runs the command, so pipes, loops and `$VARIABLES` don't work on their own. Wrap
+  them in `sudo bash -c '...'`.
+- The AWS CLI rejects quotes inside `command=`. When the command needs them, put the
+  parameters in a file, such as
+  `{"command": ["sudo bash -c 'journalctl -u kubelet | tail -n 100'"]}` in `params.json`, and
+  pass `--parameters file://params.json`.
 
 ## Status values
 

@@ -47,14 +47,14 @@ kubeadm upgrade plan
 ```
 
 `kubeadm upgrade plan` checks that the cluster can be upgraded and lists the versions you can
-upgrade to. Apply the upgrade:
+upgrade to. Apply the upgrade, and answer `y` when it asks whether to proceed:
 
 ```bash
 kubeadm upgrade apply v1.37.x
 ```
 
-When it prints `SUCCESS! Your cluster was upgraded to "v1.37.x"`, the control-plane
-components and etcd run the new version. The kubelet doesn't yet. Drain cp-1 from your machine:
+When it prints `SUCCESS! A control plane node of your cluster was upgraded to "v1.37.x"`, the
+control-plane components and etcd run the new version. The kubelet doesn't yet. Drain cp-1 from your machine:
 
 ```bash
 kubectl drain cp-1 --ignore-daemonsets --delete-emptydir-data
