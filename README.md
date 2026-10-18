@@ -115,8 +115,8 @@ addresses keep billing. [Costs](docs/costs.md) has the details.
 ## When something goes wrong
 
 1. Read the status line from `wait-for-cluster.sh`. A value that starts with `failed:` names
-   the step that failed. `cluster=unknown` means the AWS CLI call itself failed, so check your
-   credentials and region.
+   the step that failed. If the script can't read the cluster's status at all, it prints the AWS
+   CLI's error and stops: check your credentials and the region.
 2. Open a shell on the failed node and read its log:
    `sudo less /var/log/kube-lab-bootstrap.log`.
 3. Look the step up in [Troubleshooting](docs/troubleshooting.md).

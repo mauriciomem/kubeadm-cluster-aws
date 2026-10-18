@@ -7,7 +7,9 @@ about it.
 ## First steps
 
 1. Print the statuses. `wait-for-cluster.sh` exits with 0 when the cluster is ready, 1 when a
-   node reports a failure and 2 when it times out after 40 minutes:
+   node reports a failure, 2 when it times out after 40 minutes and 3 when the AWS CLI can't
+   read the cluster's status at all. In that last case it prints the AWS error, such as expired
+   credentials or a parameter that doesn't exist in that region. `--help` shows the usage:
 
    ```bash
    ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
@@ -35,7 +37,7 @@ about it.
 
 | Value | Meaning | Typical time in this state |
 |---|---|---|
-| `unknown` | Shown by `wait-for-cluster.sh` when its AWS CLI call fails: expired credentials, the wrong region or cluster name, or missing permissions. The nodes may be fine. | Until you fix your credentials |
+| `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS error on the next line. The nodes may be fine. | Until you fix your credentials |
 | `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | 1 to 5 minutes |
 | `bootstrapping` | Preparing the host and installing packages. | 3 to 8 minutes |
 | `initializing` | cp-1 runs `kubeadm init`. | 2 to 5 minutes |
