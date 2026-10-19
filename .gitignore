@@ -37,3 +37,6 @@ kubeconfig*
 
 # macOS
 .DS_Store
+
+# carter
+.carter
