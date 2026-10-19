@@ -1,20 +1,12 @@
 # kube-lab
 
-kube-lab builds a plain kubeadm cluster on AWS for CKA and CKS practice. One `terraform apply`
+kube-lab builds a plain kubeadm cluster on AWS for practice. One `terraform apply`
 gives you Kubernetes 1.36.5 with one control plane, two workers, Calico and metrics-server.
 About 20 minutes later every node is `Ready`, and the cluster is yours to upgrade, back up,
 break and harden.
 
-The cluster costs about $0.23 an hour, or $5.50 a day, for as long as it exists, whether you
-use it or not. Run `terraform destroy` when you finish a session. It's built for learning, not
+Run `terraform destroy` when you finish a session. It's built for learning, not
 for production.
-
-```mermaid
-flowchart LR
-  you([Your machine]) -- "kubectl, your IP only" --> nlb[API load balancer] --> cp[Control plane]
-  cp & w[Workers] -- outbound only --> nat[NAT gateway] --> aws[(Internet and AWS APIs)]
-  you -- "aws CLI, Session Manager" --> aws
-```
 
 The nodes run in private subnets, with no public IPs and no SSH.
 [Architecture](docs/architecture.md) explains the full picture.
@@ -40,9 +32,9 @@ IPv4 address as a `/32`. Only that address can reach the Kubernetes API.
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-curl -4 -s https://checkip.amazonaws.com    # prints your public IPv4 address
+curl -4 -s https://checkip.amazonaws.com
 terraform init
-terraform apply                             # about 5 minutes; type "yes" when asked
+terraform apply
 ```
 
 Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot, which
@@ -62,8 +54,7 @@ Waiting for kube-lab-a1b2 in us-east-1 (up to 40 min)...
 Cluster is ready. Next: ./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1
 ```
 
-`kube-lab-a1b2` is the cluster name. Terraform adds a random suffix so clusters never clash,
-and the docs write it as `<cluster>`. Now fetch the admin kubeconfig:
+Now fetch the admin kubeconfig:
 
 ```bash
 eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
@@ -108,9 +99,6 @@ control plane without first removing its etcd member breaks quorum and takes the
 rm -f ~/.kube/"$(terraform output -raw cluster_name)".yaml && unset KUBECONFIG
 terraform destroy                           # about 5 minutes
 ```
-
-Stopping the instances isn't enough: the NAT gateway, the load balancer and the public IPv4
-addresses keep billing. [Costs](docs/costs.md) has the details.
 
 ## When something goes wrong
 
