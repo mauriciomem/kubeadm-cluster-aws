@@ -76,26 +76,22 @@ overwrite the parameters with the real join token, certificate key and admin kub
 Terraform has no Kubernetes or Helm provider: cp-1 installs the add-ons itself. So Terraform
 never sees a cluster credential, and destroying the cluster still deletes every parameter.
 
-The status parameters are the exception that proves the rule: they are plain `String`
-parameters, and Terraform reads them (`modules/status`) to show progress. The nodes only write
-status values, and SSM rejects anything else (`allowed_pattern`) in case a script has a bug.
-That pattern isn't access control, because a write request can replace it, so Terraform and
-`wait-for-cluster.sh` check every value again and show anything else as `invalid`. Terraform
-reads each parameter by name, never the whole `/<cluster>/` path.
+The status parameters are different: they are plain `String` parameters, and Terraform reads
+them (`modules/status`) to show progress. Their `allowed_pattern` makes SSM refuse anything
+that isn't a status value, so a bug in a node script can't put a secret into one. Terraform
+reads each status parameter by name, never the whole `/<cluster>/` path, which also holds the
+secrets.
 
 ## Node permissions
 
-Control planes and workers get separate IAM roles. Control planes can read every parameter
-under `/<cluster>/`, and write the ones they publish: the join material, the admin
-kubeconfig, the cluster status and their own statuses. Workers can read the join token and
-the CA certificate hash, and write the worker status parameters. Every write permission
-names the exact parameters Terraform created, so a node can't create new ones, and neither
-role may attach a parameter policy. All workers share one role, so a worker could overwrite
-another worker's status. That spoofing only changes what you see: no node waits on a worker's
-status, and anything that isn't a status value shows as `invalid`. Working out
-what else an attacker on a worker could do with that role is a good CKS exercise. An explicit
-Deny keeps the admin kubeconfig and the certificate key away from workers, even if someone
-attaches a broader policy later.
+Control planes and workers get separate IAM roles. Control planes can read and write every
+parameter under `/<cluster>/`: they publish the join material, the admin kubeconfig and the
+statuses. Workers can read only the join token and the CA certificate hash, never the admin
+kubeconfig or the certificate key, and write any parameter under `/<cluster>/nodes/worker-*`.
+All workers share one role, so a worker can overwrite another worker's status, and a node can
+create extra parameters under the paths it may write, which `terraform destroy` doesn't
+remove. No node waits on a worker's status, so a spoofed one only changes what you see.
+Working out what else an attacker on a worker could do with that role is a good CKS exercise.
 
 Both roles get Session Manager access through an inline policy instead of the managed
 `AmazonSSMManagedInstanceCore` policy, because that one also allows `ssm:GetParameter` on every
@@ -197,7 +193,7 @@ cluster's progress to `/<cluster>/status/cluster`.
 
 | Node status | Meaning |
 |---|---|
-| `pending` | Terraform's placeholder. The node hasn't installed the AWS CLI yet, which usually takes about a minute. |
+| `pending` | Terraform's placeholder. The node hasn't installed the AWS CLI yet, which usually takes under a minute. |
 | `bootstrapping` | The AWS CLI works. The node is preparing the host and installing packages. |
 | `initializing` | cp-1 only: `kubeadm init` is running. |
 | `initialized` | cp-1 only: the control plane is up and the join material is published. cp-1 now installs the add-ons and waits for every node, which can take up to 30 minutes. |
@@ -209,17 +205,16 @@ cluster's progress to `/<cluster>/status/cluster`.
 | Cluster status | Meaning |
 |---|---|
 | `pending` | cp-1 hasn't finished `kubeadm init` yet. |
-| `installing` | cp-1 is installing the add-ons and waiting for every node. |
+| `installing` | The admin kubeconfig is published and kubectl works. cp-1 is installing the add-ons and waiting for every node. |
 | `ready` | Every node is `Ready` and cp-1 has finished. |
 | `failed:<step>` | cp-1 failed at the named step. |
 
 The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node.
 cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`,
 `refresh-timer` and `wait-nodes`; the other nodes run `join`. Control planes finish with
-`root-kubeconfig`, then `helm` when `helm_enabled` is set. `helm` runs after the node reports
-`joined`, and on cp-1 after the cluster reports `ready`, so it never delays them. It is
-optional: if it fails, the log shows a `WARNING`. Every failure reports the step that was running. The one exception is a
-node that can't install the AWS CLI: it can't report anything and stays at `pending`.
+`root-kubeconfig`, then `helm` when `helm_enabled` is set, before they report `joined`. Every
+failure reports the step that was running. The one exception is a node that can't install the
+AWS CLI: it can't report anything and stays at `pending`.
 
 ### SSM parameters
 
@@ -231,10 +226,10 @@ prints the prefix.
 |---|---|---|
 | `join/token` | cp-1, at init and every 12 hours | every joining node |
 | `join/ca-cert-hash` | cp-1 | every joining node |
-| `join/certificate-key` | cp-1, at init and by `kube-lab-refresh-join --upload-certs` | joining control planes (workers are denied) |
-| `kubeconfig/admin` | cp-1 | you, through `get-kubeconfig.sh` (workers are denied). An Advanced parameter, because the kubeconfig is larger than 4 KB |
+| `join/certificate-key` | cp-1, at init and by `kube-lab-refresh-join --upload-certs` | joining control planes (workers can't read it) |
+| `kubeconfig/admin` | cp-1 | you, through `get-kubeconfig.sh` (workers can't read it). An Advanced parameter, because the kubeconfig is larger than 4 KB |
 | `status/cluster` | cp-1 | you, through `wait-for-cluster.sh`, and Terraform (`cluster_status`) |
-| `nodes/<node>/status` | that node | you, Terraform, and the next control plane in line |
+| `nodes/<node>/status` | that node (any worker can write a worker's) | you, Terraform, and the next control plane in line |
 
 ### Two templating passes
 
@@ -266,9 +261,10 @@ At runtime the scripts also use:
 
 | Path | Purpose |
 |---|---|
-| `/var/log/kube-lab-bootstrap.log` | The bootstrap log, readable by root only |
+| `/var/log/kube-lab-bootstrap.log` | The bootstrap log. It never holds the join token or the kubeconfig |
 | `/var/lib/kube-lab/<step>.done` | One marker per finished step, so a re-run skips it |
-| `/run/kube-lab/` | On tmpfs: filled-in kubeadm configs and cp-1's local admin kubeconfig, deleted when the script exits, and values on their way to SSM |
+| `/run/kube-lab/` | On tmpfs: filled-in kubeadm configs and cp-1's local admin kubeconfig, deleted when the script exits |
+| `/usr/local/aws-cli/`, `/usr/local/bin/aws` | The AWS CLI v2, from AWS's zip installer (`aws_cli_version`) |
 | `/etc/kube-lab/calico/` | Calico manifests cp-1 downloads and checks against their sha256 |
 | `/usr/local/bin/helm` | The Helm CLI, on control planes with `helm_enabled` |
 

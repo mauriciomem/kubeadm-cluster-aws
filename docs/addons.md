@@ -23,8 +23,7 @@ helm list -A
 
 On a control plane, set `helm_enabled = true` in `terraform.tfvars` before you create the
 cluster. The control planes then install Helm v3.22.1 (`helm_version`), with bash completion,
-just after the cluster is ready, so give it a minute. The setting only applies to nodes
-created after you set it. Open a shell on the node
+before they report `joined`. The setting only applies to nodes created after you set it. Open a shell on the node
 (`terraform output ssm_session_commands`), run `sudo -i`, and Helm uses root's kubeconfig.
 
 The commands you use most:

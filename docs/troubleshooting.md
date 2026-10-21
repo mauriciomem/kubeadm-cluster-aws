@@ -14,7 +14,7 @@ about it.
    ```
 
 2. Open a shell on the node in question (`terraform output ssm_session_commands`) and become
-   root with `sudo -i`. The logs are readable by root only.
+   root with `sudo -i`. Most of the logs below need root.
 3. Read the bootstrap log. Every line names the node and the step, and the last lines show what
    failed:
 
@@ -43,12 +43,10 @@ sleep 30 | aws ssm start-session --region "$(terraform output -raw region)" --ta
   --parameters command="sudo tail -n 200 /var/log/kube-lab-bootstrap.log"
 ```
 
-Four things to know:
+Three things to know:
 
 - The session ends when its input closes, before the output arrives. `sleep 30 |` keeps it
   open; use a longer sleep for slower commands.
-- The command runs as `ssm-user`, whose `PATH` doesn't include `/snap/bin`. To run the AWS
-  CLI on the node, call it as `/snap/bin/aws`.
 - No shell runs the command, so pipes, loops and `$VARIABLES` don't work on their own. Wrap
   them in `sudo bash -c '...'`.
 - The AWS CLI rejects quotes inside `command=`. When the command needs them, put the
@@ -67,13 +65,13 @@ parameters don't exist yet. From then on, every plan and apply ends with a warni
 cluster is ready. While the nodes work, it reads:
 
 ```text
-Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. The nodes usually finish about 5 minutes after they're created. ...
+Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. Follow it with: ./scripts/wait-for-cluster.sh kube-lab-a1b2 us-east-1
 ```
 
 When a node fails, it names the node and the step:
 
 ```text
-Bootstrap failed: worker-2 at step join. Open a shell on that node (terraform output ssm_session_commands) and read /var/log/kube-lab-bootstrap.log as root; ...
+Bootstrap failed: worker-2 at step join. Read /var/log/kube-lab-bootstrap.log on that node (terraform output ssm_session_commands); docs/troubleshooting.md explains each step.
 ```
 
 The warning never blocks a plan, an apply or a destroy. `terraform output cluster_status` shows
@@ -104,28 +102,34 @@ are wrong. That makes it easy to use in your own scripts.
 ### Until it finishes
 
 Without `--once`, the script prints a line whenever a status changes, and repeats the line every
-2 minutes so a long step doesn't look hung. It exits with 0 when the cluster is ready, 1 when a
+2 minutes so a long step doesn't look hung. When the cluster reports `installing`, it says once
+that the API is up and prints the `get-kubeconfig.sh` line: kubectl works from then on, while
+the nodes stay `NotReady` until the network plugin runs. It exits with 0 when the cluster is ready, 1 when a
 node fails, 2 when it gives up after 40 minutes, and 3 when the AWS CLI can't read the status.
-In that last case it prints the AWS CLI's error, such as expired credentials or a cluster that
-doesn't exist in that region. `--help` shows the usage.
+In that last case the AWS CLI's error is above the message, such as expired credentials or a
+cluster that doesn't exist in that region. If a later call fails during the wait, for example
+when your credentials expire, the AWS CLI's error appears and the script keeps the last status
+line. `--help` shows the usage.
 
 ### Afterward, with timings
 
-`--history` shows when each status changed. The columns are the time, the time since Terraform
-created the parameters, the value, and how long the value stayed (output abridged):
+`--history` shows every value each status parameter has had, with the time SSM recorded it.
+The first value, `pending`, is Terraform creating the parameter (output abridged):
 
 ```text
-cluster
-  12:00:00  +0m00s    pending           3m50s
-  12:03:50  +3m50s    installing        2m00s
-  12:05:50  +5m50s    ready             (current)
-worker-1
-  12:00:00  +0m00s    pending           1m10s
-  12:01:10  +1m10s    bootstrapping     2m10s
-  12:03:20  +3m20s    waiting           0m50s
-  12:04:10  +4m10s    joining           0m55s
-  12:05:05  +5m05s    joined            (current)
+status/cluster
+  2026-10-21T12:00:00.123000+00:00	pending
+  2026-10-21T12:03:50.456000+00:00	installing
+  2026-10-21T12:05:50.789000+00:00	ready
+nodes/worker-1/status
+  2026-10-21T12:00:00.321000+00:00	pending
+  2026-10-21T12:01:10.654000+00:00	bootstrapping
+  2026-10-21T12:03:20.987000+00:00	waiting
+  2026-10-21T12:04:10.111000+00:00	joining
+  2026-10-21T12:05:05.222000+00:00	joined
 ```
+
+The AWS CLI prints the times in your local time zone.
 
 It needs the `ssm:GetParameterHistory` permission. SSM keeps the last 100 versions of each
 parameter, which is far more than one bootstrap writes.
@@ -134,19 +138,17 @@ parameter, which is far more than one bootstrap writes.
 
 | Value | Meaning | Typical time in this state |
 |---|---|---|
-| `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS CLI's error below the status line. The nodes may be fine. | Until you fix your credentials |
-| `invalid` | The parameter holds something that isn't a status value, so it isn't shown. The node scripts never write one, so someone changed the parameter by hand or from a node's shell. | |
-| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute |
+| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute after the node starts |
 | `bootstrapping` | Preparing the host and installing packages. | 1 to 3 minutes |
 | `initializing` | cp-1 runs `kubeadm init`. | About 1 minute |
-| `initialized` | cp-1 installs the network plugin and kubelet-csr-approver, then waits until every node is `Ready`. | 2 to 5 minutes; gives up after 30 |
+| `initialized` | The API is up and the kubeconfig is published. cp-1 installs the network plugin and kubelet-csr-approver, then waits until every node is `Ready`. | 2 to 5 minutes; gives up after 30 |
 | `waiting` | A joining node waits for the join token, the previous control plane and the API. | Until cp-1 is `initialized` |
 | `joining` | `kubeadm join` runs. | 1 to 3 minutes |
 | `joined` | Done. | |
 | `failed:<step>` | The step failed. See below. | |
 
-The cluster value goes from `pending` to `installing` when cp-1 starts on the add-ons, and to
-`ready` when every node is `Ready`. [Architecture](architecture.md#bootstrap-contract) has the
+The cluster value goes from `pending` to `installing` when cp-1 has published the kubeconfig
+and starts on the add-ons, and to `ready` when every node is `Ready`. [Architecture](architecture.md#bootstrap-contract) has the
 full sequence.
 
 ## Failed steps
@@ -156,7 +158,7 @@ command that failed. The steps below are in the order they run.
 
 | Step | Nodes | What it does | What to check |
 |---|---|---|---|
-| `awscli` | all | Installs the AWS CLI snap | The node can't report this failure, so it stays `pending`. Open a shell and read the log. The usual cause is no internet access through the NAT gateway. |
+| `awscli` | all | Downloads the AWS CLI v2 zip for `aws_cli_version` from awscli.amazonaws.com, checks it against `aws_cli_sha256` and installs it to `/usr/local/bin/aws` | The node can't report this failure, so it stays `pending`. Open a shell and read the log. The usual causes are no internet access through the NAT gateway, or a checksum mismatch after you changed `aws_cli_version` without `aws_cli_sha256`. |
 | `host` | all | Turns off swap, loads kernel modules, sets sysctls | Read the log. This rarely fails. |
 | `packages` | all | Installs containerd, kubeadm, kubelet and kubectl from the Docker and Kubernetes apt repositories | A repository or mirror was down, `containerd_version` matches no package, or an apt signing key changed. A key mismatch stops the bootstrap on purpose: check the new key's fingerprint against the Docker and Kubernetes install docs before you update `lib.sh`. |
 | `containerd` | all | Writes `/etc/containerd/config.toml` (CRI on, systemd cgroups) and restarts containerd | `journalctl -u containerd`. |
@@ -168,9 +170,9 @@ command that failed. The steps below are in the order they run.
 | `csr-approver` | cp-1 | Applies kubelet-csr-approver | Read the log; the API server must be reachable on cp-1. |
 | `refresh-timer` | cp-1 | Enables the join-token refresh timer | `systemctl status kube-lab-refresh-join.timer`. |
 | `wait-nodes` | cp-1 | Waits up to 30 minutes for every node to be `Ready`, then restarts CoreDNS so its two replicas spread across nodes | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
-| `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
+| `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), checking every 10 seconds, then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
 | `root-kubeconfig` | control planes | Copies `admin.conf` to `/root/.kube/config`, so `sudo -i` gives you a working kubectl | Check that `/etc/kubernetes/admin.conf` exists. |
-| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and writes its bash completion file. Runs after the node reports `joined` (and on cp-1 after the cluster reports `ready`) | Optional: a failure never shows as `failed:helm`. Look for `WARNING` in the log; a checksum mismatch or a failed download is the usual cause. A download that stalls gives up after a minute, and one that takes longer than 15 minutes is stopped. |
+| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and writes its bash completion file, before the node reports `joined` | A checksum mismatch or a failed download is the usual cause. Every download is retried 5 times, and each attempt is stopped after 10 minutes. |
 
 ## Run the bootstrap again
 
@@ -185,9 +187,6 @@ sudo bash /var/lib/cloud/instance/scripts/worker.sh    # or control-plane.sh
 Each finished step leaves a marker in `/var/lib/kube-lab/`, such as `packages.done`. Delete a
 marker to make that step run again. `local-kubeconfig` and `root-kubeconfig` have no marker:
 they are quick and run every time.
-
-On a cluster created before the status parameters became Strings, read
-[this](operations.md#status-parameters-on-a-cluster-created-before-they-became-strings) first.
 
 If cp-1 fails at `init` and a reset doesn't help, the quickest fix is a new cluster:
 `terraform destroy`, then `terraform apply`.

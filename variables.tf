@@ -163,7 +163,7 @@ variable "csr_approver_version" {
 
 variable "helm_enabled" {
   type        = bool
-  description = "Install the Helm CLI on the control planes, for root, with bash completion. Optional tooling: if the download fails, the bootstrap logs a warning and carries on. Only used when a node is created."
+  description = "Install the Helm CLI on the control planes, for root, with bash completion. If the download fails, the node reports failed:helm. Only used when a node is created."
   default     = false
 }
 

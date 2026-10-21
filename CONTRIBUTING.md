@@ -60,20 +60,19 @@ credentials and creates nothing. The tests pin the values they assume, so your
 |---|---|
 | `tests/nodes.tftest.hcl` | The node map: names, roles, indexes and taints |
 | `tests/cluster.tftest.hcl` | `modules/cluster` on its own: placement, the load balancer, security groups, SSM parameters, IAM, and the x86_64 check |
-| `tests/bootstrap.tftest.hcl` | `modules/cluster/bootstrap` on its own: the plan-time guards on node names and `cluster.env` values |
+| `tests/bootstrap.tftest.hcl` | `modules/cluster/bootstrap` on its own: the plan-time guard on node names |
 | `tests/network.tftest.hcl` | `modules/network` on its own: AZ selection by instance type |
 | `tests/user_data.tftest.hcl` | Which files reach which node and what is rendered into them |
 | `tests/cni.tftest.hcl` | What changes with `cni` |
 | `tests/status.tftest.hcl` | `modules/status` on its own: the `cluster_ready` check and its messages |
 | `tests/validation.tftest.hcl` | Every input validation rule |
 
-`tests/scripts.sh` is plain bash. It runs `get-kubeconfig.sh`, `wait-for-cluster.sh` and the
-status helpers in `lib.sh` against a fake `aws` on `PATH`, with `/bin/bash` (set `TEST_BASH` to
-use another). On macOS that is bash 3.2, the oldest version the operator scripts support.
-
-The `static_guard_*` runs in `user_data.tftest.hcl` are different from the rest. They check the
-text of shell files that Terraform copies without changing, to stop known mistakes from coming
-back. If you change one of those lines on purpose, update the guard in the same commit.
+`tests/scripts.sh` is plain bash. It runs `get-kubeconfig.sh` and `wait-for-cluster.sh` against
+a fake `aws` and a fake `sleep` on `PATH`, with `/bin/bash` (set `TEST_BASH` to use another). On
+macOS that is bash 3.2, the oldest version the operator scripts support. It also runs the step,
+retry and status helpers in `lib.sh`. The nodes run bash 5, and the tests of the ERR trap need
+bash 4 or later: they use `bash` from `PATH` (set `NODE_BASH` to use another) and are skipped
+on an older one. CI runs them.
 
 Name runs after the behavior they check, and write error messages that say why the rule
 matters. Mocked values that the code parses, such as the load balancer DNS name, are pinned in
@@ -86,8 +85,9 @@ Changes to the node scripts also need a real cluster: create one, check that eve
 
 Most pins are variables in `variables.tf`, each with its checksum next to it.
 
-1. Change the version variable: `k8s_version`, `containerd_version`, `calico_version`,
-   `cilium_version`, `cilium_cli_version`, `csr_approver_version` or `helm_version`.
+1. Change the version variable: `k8s_version`, `containerd_version`, `aws_cli_version`,
+   `calico_version`, `cilium_version`, `cilium_cli_version`, `csr_approver_version` or
+   `helm_version`.
 2. Recompute the matching checksum from the exact file the nodes download. On macOS, use
    `shasum -a 256` instead of `sha256sum`.
 
@@ -99,6 +99,23 @@ Most pins are variables in `variables.tf`, each with its checksum next to it.
    curl -fsSL "$base/v3_projectcalico_org.yaml" | sha256sum    # calico_crds_sha256
    curl -fsSL "$base/tigera-operator.yaml" | sha256sum         # calico_operator_sha256
    ```
+
+   AWS publishes a PGP signature for the AWS CLI zip, not a checksum. Download the zip, check
+   the signature with the
+   [AWS CLI public key](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+   (fingerprint `FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C`), then hash the zip you
+   checked:
+
+   ```bash
+   v=2.38.3
+   curl -fsSLO "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$v.zip"
+   curl -fsSLO "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$v.zip.sig"
+   gpg --verify "awscli-exe-linux-x86_64-$v.zip.sig" "awscli-exe-linux-x86_64-$v.zip"
+   sha256sum "awscli-exe-linux-x86_64-$v.zip"                     # aws_cli_sha256
+   ```
+
+   The latest version is the top entry of the
+   [AWS CLI v2 changelog](https://github.com/aws/aws-cli/blob/v2/CHANGELOG.rst).
 
    For `cilium_cli_sha256`, take the value from the release's
    `cilium-linux-amd64.tar.gz.sha256sum` file. For `helm_sha256`, take it from
