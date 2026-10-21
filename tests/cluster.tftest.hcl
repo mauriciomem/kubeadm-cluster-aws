@@ -14,6 +14,9 @@ variables {
   private_subnet_cidrs        = ["10.10.0.0/20", "10.10.16.0/20", "10.10.32.0/20"]
   public_subnet_ids           = ["subnet-pa", "subnet-pb", "subnet-pc"]
   root_volume_size            = 30
+  # Also root variables: pinned so a terraform.tfvars in the working directory can't reach them.
+  ami_id = null
+  tags   = {}
 
   nodes = {
     cp-1     = { role = "control-plane", index = 0, init = true }
@@ -169,8 +172,30 @@ run "ssm_parameters" {
   }
 
   assert {
-    condition     = alltrue([for p in aws_ssm_parameter.cluster : p.type == "SecureString" && p.value_wo_version == 1])
-    error_message = "Every cluster parameter must be a SecureString created through value_wo."
+    condition = alltrue([
+      for k in ["join/token", "join/ca-cert-hash", "join/certificate-key", "kubeconfig/admin"] :
+      aws_ssm_parameter.cluster[k].type == "SecureString" && aws_ssm_parameter.cluster[k].allowed_pattern == null && aws_ssm_parameter.cluster[k].value_wo_version == 1
+    ])
+    error_message = "Join material and the admin kubeconfig must stay SecureStrings created through value_wo."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, p in aws_ssm_parameter.cluster :
+      p.type == "String" && p.allowed_pattern == local.status_pattern && p.value_wo_version == 2
+      if k == "status/cluster" || startswith(k, "nodes/")
+    ])
+    error_message = "Status parameters must be Strings limited to the status values (allowed_pattern), at value_wo_version 2."
+  }
+
+  assert {
+    condition     = length([for p in aws_ssm_parameter.cluster : p if p.type == "String"]) == 1 + length(var.nodes)
+    error_message = "Only the status parameters may be plain Strings: one per node plus the cluster's."
+  }
+
+  assert {
+    condition     = output.status_parameters == merge({ cluster = "/kube-lab-test/status/cluster" }, { for k in keys(var.nodes) : k => "/kube-lab-test/nodes/${k}/status" })
+    error_message = "status_parameters must name exactly the status parameters, which Terraform reads; never a secret."
   }
 
   assert {
@@ -186,6 +211,39 @@ run "ssm_parameters" {
   assert {
     condition     = aws_ssm_parameter.cluster["join/token"].name == "/kube-lab-test/join/token"
     error_message = "Parameters must live under /<cluster>/."
+  }
+}
+
+run "status_pattern_accepts_only_status_values" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  # Every value the node scripts write, including failed:<step> for every step name.
+  assert {
+    condition = alltrue([
+      for v in concat(
+        ["pending", "bootstrapping", "waiting", "joining", "joined", "initializing", "initialized", "installing", "ready"],
+        [for s in ["start", "awscli", "host", "packages", "containerd", "shell", "init", "publish", "local-kubeconfig", "cni", "csr-approver", "refresh-timer", "wait-nodes", "join", "root-kubeconfig", "complete"] : "failed:${s}"],
+      ) : can(regex(local.status_pattern, v))
+    ])
+    error_message = "status_pattern must accept every status the node scripts write."
+  }
+
+  assert {
+    condition = !anytrue([
+      for v in ["", "Ready", "failed:", "failed:$(cat /etc/kubernetes/admin.conf)", "failed:a b", "ready\nabcdef.0123456789abcdef", "joined ", "failed:${join("", [for i in range(41) : "a"])}", "sha256:0123"] :
+      can(regex(local.status_pattern, v))
+    ])
+    error_message = "status_pattern must reject anything outside the status protocol, so a status can never carry a secret."
+  }
+
+  # lib.sh checks values before it writes them; both sides must agree.
+  assert {
+    condition     = strcontains(module.bootstrap.nodes["worker-1"].files["/etc/kube-lab/lib.sh"], "readonly STATUS_PATTERN='${local.status_pattern}'\n")
+    error_message = "STATUS_PATTERN in lib.sh must equal status_pattern in modules/cluster/ssm.tf."
   }
 }
 

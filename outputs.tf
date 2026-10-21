@@ -8,8 +8,13 @@ output "cluster_name" {
   value       = local.cluster_name
 }
 
+output "cluster_status" {
+  description = "Bootstrap status of the cluster and of each node, as of the last apply or apply -refresh-only (terraform output does not refresh it). For the live value, run status_command."
+  value       = module.status.status
+}
+
 output "kubeconfig_command" {
-  description = "Command that downloads the admin kubeconfig to ~/.kube/<cluster>.yaml and prints an export KUBECONFIG line."
+  description = "Command that downloads the admin kubeconfig to ~/.kube/<cluster>.yaml. Run it as eval \"$(...)\" to set KUBECONFIG in your shell; run on its own, it prints what to do. next_steps shows the eval form."
   value       = "./scripts/get-kubeconfig.sh ${local.cluster_name} ${var.region}"
 }
 
@@ -38,6 +43,11 @@ output "ssm_session_commands" {
   value = {
     for k, n in module.cluster.nodes : k => "aws ssm start-session --region ${var.region} --target ${n.instance_id}"
   }
+}
+
+output "status_command" {
+  description = "Command that prints the live bootstrap status once. Exit code 0 ready, 1 failed, 4 still in progress."
+  value       = "./scripts/wait-for-cluster.sh --once ${local.cluster_name} ${var.region}"
 }
 
 output "wait_command" {

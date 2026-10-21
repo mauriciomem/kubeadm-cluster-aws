@@ -24,3 +24,11 @@ output "ssm_parameter_prefix" {
   description = "SSM path holding the join material, the admin kubeconfig and bootstrap status."
   value       = local.ssm_prefix
 }
+
+output "status_parameters" {
+  description = "Names of the status parameters (never the secrets), keyed by \"cluster\" and by node name. Their keys are known at plan time."
+  value = merge(
+    { cluster = aws_ssm_parameter.cluster["status/cluster"].name },
+    { for k in keys(var.nodes) : k => aws_ssm_parameter.cluster["nodes/${k}/status"].name },
+  )
+}

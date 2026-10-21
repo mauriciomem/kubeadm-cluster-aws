@@ -21,7 +21,11 @@
 #     cp-1:          bootstrapping -> initializing -> initialized -> joined
 #   /<cluster>/status/cluster, written by cp-1 only: pending -> installing -> ready
 #   On failure, failed:<step>, where <step> is the run_step or run_always name.
-#   Readers: scripts/wait-for-cluster.sh, and join_cluster (cp-N waits for cp-(N-1)).
+#   Readers: scripts/wait-for-cluster.sh, Terraform (modules/status), and
+#   join_cluster (cp-N waits for cp-(N-1)).
+#   Status parameters are plain Strings, readable without decryption, so they must never
+#   carry anything else: ssm_put_status only writes values that match STATUS_PATTERN, and
+#   SSM rejects the rest too (allowed_pattern in modules/cluster/ssm.tf, the same regex).
 
 # shellcheck source-path=SCRIPTDIR source=../templates/cluster.env.tftpl
 source /etc/kube-lab/cluster.env
@@ -45,6 +49,8 @@ readonly RUN_DIR=/run/kube-lab
 readonly LOG_FILE=/var/log/kube-lab-bootstrap.log
 # The step that is running, for log lines and failed:<step>. Set by run_step and run_always.
 STEP=${STEP:-start}
+# Every value a status parameter accepts. Keep equal to status_pattern in modules/cluster/ssm.tf.
+readonly STATUS_PATTERN='^(pending|bootstrapping|waiting|joining|joined|initializing|initialized|installing|ready|failed:[a-z0-9-]{1,40})$'
 
 # --- Logging, SSM and status ---------------------------------------------------------
 
@@ -94,13 +100,30 @@ ssm_get() {
 }
 
 #######################################
+# Writes a status parameter. No --type or --tier: Terraform owns those, and an update
+# doesn't need them. The value is not a secret, so it can go on the command line.
+# Globals: REGION, SSM_PREFIX, STATUS_PATTERN
+# Arguments: name, value
+# Returns: 1 if the value isn't a status value; it is not written then
+#######################################
+ssm_put_status() {
+  local name=$1 value=$2
+  if [[ ! $value =~ $STATUS_PATTERN ]]; then
+    log "refusing to write a value that is not a status to $name"
+    return 1
+  fi
+  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/$name" \
+    --overwrite --value "$value" >/dev/null
+}
+
+#######################################
 # Publishes this node's status. Never fails: a lost status update must not stop the bootstrap.
 # Globals: NODE_NAME
 # Arguments: status
 #######################################
 status() {
   local value=$1
-  ssm_put "nodes/$NODE_NAME/status" "$value" || log "could not publish node status '$value'"
+  ssm_put_status "nodes/$NODE_NAME/status" "$value" || log "could not publish node status '$value'"
 }
 
 #######################################
@@ -111,7 +134,7 @@ status() {
 cluster_status() {
   local value=$1
   [[ $IS_INIT_NODE == true ]] || return 0
-  ssm_put status/cluster "$value" || log "could not publish cluster status '$value'"
+  ssm_put_status status/cluster "$value" || log "could not publish cluster status '$value'"
 }
 
 #######################################

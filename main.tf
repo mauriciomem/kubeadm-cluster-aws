@@ -52,3 +52,17 @@ resource "terraform_data" "wait_for_cluster" {
     }
   }
 }
+
+# Reads the bootstrap statuses into the cluster_status output and warns on plan and apply
+# until the cluster is ready. Whenever the cluster or the wait has changes, the reads wait
+# for the apply: new nodes then show up as pending, and with wait_for_cluster = true the
+# statuses are read after the wait.
+module "status" {
+  source = "./modules/status"
+
+  cluster_name = local.cluster_name
+  region       = var.region
+  parameters   = module.cluster.status_parameters
+
+  depends_on = [module.cluster, terraform_data.wait_for_cluster]
+}

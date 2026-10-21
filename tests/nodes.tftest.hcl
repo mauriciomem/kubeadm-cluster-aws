@@ -12,8 +12,34 @@ override_resource {
   }
 }
 
+# modules/status reads live SSM values. On a new cluster that waits for the apply, so its
+# cluster_ready check can't be evaluated in a plan, which terraform test reports as a
+# failure. tests/status.tftest.hcl tests the module on its own.
+override_module {
+  target = module.status
+  outputs = {
+    status  = { cluster = "ready" }
+    message = ""
+  }
+}
+
+# Every value the runs assume is pinned here: test-file variables win over terraform.tfvars,
+# so your own settings don't change what the tests see.
 variables {
-  operator_cidrs = ["203.0.113.10/32"]
+  operator_cidrs      = ["203.0.113.10/32"]
+  region              = "us-east-1"
+  name_prefix         = "kube-lab"
+  control_plane_count = 1
+  worker_count        = 2
+  cni                 = "calico"
+  k8s_version         = "1.36.5"
+  cilium_version      = "1.20.3"
+  vpc_cidr            = "10.10.0.0/16"
+  pod_cidr            = "192.168.0.0/16"
+  service_cidr        = "10.96.0.0/12"
+  ami_id              = null
+  helm_enabled        = false
+  wait_for_cluster    = false
 }
 
 run "defaults_one_control_plane_two_workers" {
