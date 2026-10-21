@@ -12,9 +12,8 @@
 # shellcheck source-path=SCRIPTDIR source=../templates/cluster.env.tftpl
 source /etc/kube-lab/cluster.env
 
-# cloud-init and systemd start us without HOME, which the aws-cli snap needs.
+# cloud-init and systemd start us without HOME; kubectl, helm and cilium keep caches under it.
 export HOME=${HOME:-/root}
-export PATH=$PATH:/snap/bin
 export DEBIAN_FRONTEND=noninteractive
 
 # Signing keys of the apt repositories, from the Docker and Kubernetes install docs.
@@ -173,9 +172,18 @@ fetch_verified() {
   mv -f "$dest.download" "$dest"
 }
 
+# AWS CLI v2 from AWS's own zip, to /usr/local/aws-cli with a link in /usr/local/bin. The
+# AMI has no unzip and apt isn't set up yet, so Python's zipfile unpacks it. zipfile drops
+# the file modes, hence the chmod. --update makes a re-run safe.
 install_aws_cli() {
-  retry 5 snap wait system seed.loaded
-  retry 5 snap install aws-cli --classic
+  local dir
+  dir=$(mktemp -d)
+  fetch_verified "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$AWS_CLI_VERSION.zip" \
+    "$AWS_CLI_SHA256" "$dir/awscli.zip"
+  python3 -m zipfile -e "$dir/awscli.zip" "$dir"
+  chmod -R a+rx "$dir/aws"
+  "$dir/aws/install" --update
+  rm -rf "$dir"
 }
 
 # --- Host preparation and packages ---------------------------------------------------

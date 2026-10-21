@@ -12,6 +12,28 @@ variable "ami_id" {
   }
 }
 
+variable "aws_cli_sha256" {
+  type        = string
+  description = "sha256 of awscli-exe-linux-x86_64-<aws_cli_version>.zip from awscli.amazonaws.com."
+  default     = "ae55fa4aa6653fc296f38eac500873e3b0e798d02a35f305c692d02fc835c548"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.aws_cli_sha256))
+    error_message = "aws_cli_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "aws_cli_version" {
+  type        = string
+  description = "AWS CLI v2 version the nodes install, without a leading v (for example 2.38.3). The nodes use it to report their status."
+  default     = "2.38.3"
+
+  validation {
+    condition     = can(regex("^2\\.[0-9]+\\.[0-9]+$", var.aws_cli_version))
+    error_message = "aws_cli_version must be an AWS CLI v2 version such as 2.38.3, without a leading v."
+  }
+}
+
 variable "calico_crds_sha256" {
   type        = string
   description = "sha256 of Calico's v3_projectcalico_org.yaml for calico_version."

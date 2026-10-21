@@ -39,6 +39,10 @@ variable "software" {
     cni                = string
     pod_cidr           = string
     service_cidr       = string
+    aws_cli = object({
+      version = string
+      sha256  = string
+    })
     calico = object({
       version         = string
       crds_sha256     = string

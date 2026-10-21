@@ -28,6 +28,8 @@ locals {
       region                 = var.region
       ssm_prefix             = var.ssm_prefix
       api_endpoint           = var.api_endpoint
+      aws_cli_version        = var.software.aws_cli.version
+      aws_cli_sha256         = var.software.aws_cli.sha256
       k8s_version            = var.software.k8s_version
       k8s_minor              = local.k8s_minor
       containerd_version     = var.software.containerd_version

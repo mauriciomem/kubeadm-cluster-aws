@@ -220,6 +220,23 @@ run "helm_on_control_planes_only" {
   }
 }
 
+run "every_node_gets_the_aws_cli_pins" {
+  command = plan
+
+  variables {
+    aws_cli_version = "2.99.1"
+    aws_cli_sha256  = "0000000000000000000000000000000000000000000000000000000000000001"
+  }
+
+  assert {
+    condition = alltrue([
+      for n in module.cluster.bootstrap :
+      strcontains(n.files["/etc/kube-lab/cluster.env"], "\nAWS_CLI_VERSION='2.99.1'\nAWS_CLI_SHA256='0000000000000000000000000000000000000000000000000000000000000001'\n")
+    ])
+    error_message = "Every node installs the AWS CLI before it can report a status, so cluster.env must carry its version and checksum."
+  }
+}
+
 run "largest_bootstrap_fits_the_user_data_limit" {
   command = plan
 

@@ -22,6 +22,10 @@ locals {
     cni                = var.cni
     pod_cidr           = var.pod_cidr
     service_cidr       = var.service_cidr
+    aws_cli = {
+      version = var.aws_cli_version
+      sha256  = var.aws_cli_sha256
+    }
     calico = {
       version         = var.calico_version
       crds_sha256     = var.calico_crds_sha256

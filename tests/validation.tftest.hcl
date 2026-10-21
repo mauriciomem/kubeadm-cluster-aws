@@ -259,6 +259,37 @@ run "malformed_ami_id_rejected" {
   expect_failures = [var.ami_id]
 }
 
+run "aws_cli_version_with_v_rejected" {
+  command = plan
+
+  variables {
+    aws_cli_version = "v2.38.3"
+  }
+
+  expect_failures = [var.aws_cli_version]
+}
+
+# The nodes need the AWS CLI v2: v1 has no zip installer at this URL.
+run "aws_cli_v1_rejected" {
+  command = plan
+
+  variables {
+    aws_cli_version = "1.44.0"
+  }
+
+  expect_failures = [var.aws_cli_version]
+}
+
+run "uppercase_aws_cli_sha256_rejected" {
+  command = plan
+
+  variables {
+    aws_cli_sha256 = "AE55FA4AA6653FC296F38EAC500873E3B0E798D02A35F305C692D02FC835C548"
+  }
+
+  expect_failures = [var.aws_cli_sha256]
+}
+
 run "calico_version_without_v_rejected" {
   command = plan
 
