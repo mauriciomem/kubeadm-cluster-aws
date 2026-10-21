@@ -110,6 +110,8 @@ Most pins are variables in `variables.tf`, each with its checksum next to it.
 4. Run the checks above, then create a fresh cluster and check that it reaches `ready`.
 5. If you changed a default, update the tables in `docs/configuration.md` and any version the
    docs mention, such as the etcd version in the labs.
+6. When you change `k8s_version`, check that the versions in `docs/addons.md` still support
+   it: metrics-server, its chart and local-path-provisioner.
 
 A few pins live outside `variables.tf`:
 
@@ -138,5 +140,5 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:
 
 Code comments explain why, not what, in a line or two. Docs speak to the reader as "you", in
 the present tense and plain words, in US English. Each page in `docs/` serves one purpose:
-labs teach, operations and troubleshooting help you do a task, configuration is reference, and
+labs teach, add-ons, operations and troubleshooting help you do a task, configuration is reference, and
 architecture explains.
