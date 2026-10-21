@@ -87,8 +87,11 @@ write, so they can't hold a secret. Terraform reads each one by name, never the 
 Control planes and workers get separate IAM roles. Control planes can read and write every
 parameter under `/<cluster>/`. Workers can read the join token and the CA certificate hash, and
 write the worker status parameters. All workers share one role, so a worker could overwrite
-another worker's status. An explicit Deny keeps the admin kubeconfig and the certificate key
-away from workers, even if someone attaches a broader policy later.
+another worker's status. That spoofing only changes what you see: no node waits on a worker's
+status, and SSM only accepts status values in the parameters Terraform created. Working out
+what else an attacker on a worker could do with that role is a good CKS exercise. An explicit
+Deny keeps the admin kubeconfig and the certificate key away from workers, even if someone
+attaches a broader policy later.
 
 Both roles get Session Manager access through an inline policy instead of the managed
 `AmazonSSMManagedInstanceCore` policy, because that one also allows `ssm:GetParameter` on every
@@ -167,6 +170,13 @@ sequenceDiagram
   cp1->>ssm: status/cluster = ready
 ```
 
+cp-1 installs two add-ons and nothing else. The network plugin gives pods their addresses.
+kubelet-csr-approver approves the certificate each kubelet requests for its own HTTPS port.
+The kubeadm config sets `serverTLSBootstrap: true`, so kubelets ask the cluster's certificate authority
+for that certificate instead of signing their own. Until it is approved, commands that go
+through the kubelet, such as `kubectl logs` and `kubectl exec`, fail, and so would
+metrics-server if you install it. Everything else is up to you: [Add-ons](addons.md) shows how.
+
 cp-1 publishes the join material as soon as `kubeadm init` finishes, so the other nodes join
 while it installs the add-ons. Control planes join one at a time because kubeadm adds each new
 etcd member as a learner, and etcd allows one learner at a time. cp-2 waits for cp-1 to reach
@@ -183,7 +193,7 @@ cluster's progress to `/<cluster>/status/cluster`.
 
 | Node status | Meaning |
 |---|---|
-| `pending` | Terraform's placeholder. The node hasn't installed the AWS CLI yet, which takes a few minutes. |
+| `pending` | Terraform's placeholder. The node hasn't installed the AWS CLI yet, which usually takes about a minute. |
 | `bootstrapping` | The AWS CLI works. The node is preparing the host and installing packages. |
 | `initializing` | cp-1 only: `kubeadm init` is running. |
 | `initialized` | cp-1 only: the control plane is up and the join material is published. cp-1 now installs the add-ons and waits for every node, which can take up to 30 minutes. |

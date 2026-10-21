@@ -38,10 +38,14 @@ terraform init
 terraform apply
 ```
 
-Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot. That
-usually takes about 5 minutes after `terraform apply` finishes, a little longer with three
-control planes. This script shows their progress and returns when the cluster is ready or a
-node fails (output abridged):
+Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot, which
+usually takes 4 to 6 minutes after `terraform apply` finishes, a little longer with three
+control planes. Until then, every plan and apply ends with a warning that the cluster isn't
+ready yet, and `terraform output next_steps` prints the commands below with your cluster's
+name filled in.
+
+This script shows the nodes' progress and returns when the cluster is ready or a node fails
+(output abridged):
 
 ```bash
 ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
@@ -64,22 +68,27 @@ eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(t
 kubectl get nodes
 ```
 
-The script saves the kubeconfig to `~/.kube/<cluster>.yaml` and prints an
-`export KUBECONFIG=...` line, which `eval` runs in your shell. A script can't change your
-shell's environment by itself, so if you run it without `eval` it prints the commands to copy
-instead. To make `terraform apply` itself wait for the cluster, set `wait_for_cluster = true`.
+Keep the `eval "$(...)"` around the script. The script saves the kubeconfig to
+`~/.kube/<cluster>.yaml` and prints an `export KUBECONFIG=...` line, and `eval` runs that line
+in your shell. A script can't change your shell's environment by itself, so if you run it
+without `eval`, `KUBECONFIG` stays unset and the script prints the commands to copy instead.
+Run the `eval` line again in every new terminal.
+
+To make `terraform apply` itself wait for the cluster, set `wait_for_cluster = true`.
 
 ## Use the cluster
 
-Use kubectl as with any cluster. There is no metrics-server, so `kubectl top` doesn't work
-until you install one. For a shell on a node, copy its command from
+Use kubectl as with any cluster. For a shell on a node, copy its command from
 `terraform output ssm_session_commands`, then run `sudo -i`. On the control planes, root has
 kubectl set up, with the `k` alias and completion.
 
-A few things a cloud cluster would give you are missing, and each makes a good exercise. With no
-cloud controller, Services of type `LoadBalancer` stay `<pending>`, so use `NodePort` or
-`kubectl port-forward`. With no StorageClass, a PersistentVolumeClaim stays `Pending` until you
-create a PersistentVolume for it. There is no ingress controller.
+The cluster comes with only a network plugin and kubelet-csr-approver. A few things a cloud
+cluster would give you are missing, and each makes a good exercise. There is no metrics-server,
+so `kubectl top` doesn't work until you install it. With no cloud controller, Services of type
+`LoadBalancer` stay `<pending>`, so use `NodePort` or `kubectl port-forward`. With no
+StorageClass, a PersistentVolumeClaim stays `Pending` until you create a PersistentVolume for
+it. There is no ingress controller. [Add-ons](docs/addons.md) shows how to install
+metrics-server and other components, with or without Helm.
 
 ## Practice labs
 
@@ -106,8 +115,9 @@ terraform destroy                           # about 5 minutes
 
 ## When something goes wrong
 
-1. Read the status line from `wait-for-cluster.sh`. A value that starts with `failed:` names
-   the step that failed. If the script can't read the cluster's status at all, it prints the AWS
+1. Read the status line from `wait-for-cluster.sh`, or print it once with the command from
+   `terraform output status_command`. A value that starts with `failed:` names the step that
+   failed. If the script can't read the cluster's status at all, it prints the AWS
    CLI's error and stops: check your credentials and the region.
 2. Open a shell on the failed node and read its log:
    `sudo less /var/log/kube-lab-bootstrap.log`.

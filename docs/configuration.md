@@ -33,7 +33,7 @@ plane runs, which the Kubernetes version skew policy doesn't allow. Upgrade with
 | `cni` | `"calico"` | New cluster | Network plugin: calico (the default, tested on 1.36 and 1.37) or cilium. Installed once, when the cluster is created. |
 | `control_plane_count` | `1` | Now, with care | Number of control-plane nodes: 1, 3, 5 or 7 (odd, so etcd keeps quorum). Read docs/operations.md before you lower it on a running cluster. |
 | `control_plane_instance_type` | `"t3.medium"` | Now, restarts nodes | EC2 instance type for control-plane nodes. Must be x86_64; kubeadm needs at least 2 vCPUs and 2 GiB of memory. |
-| `helm_enabled` | `false` | New nodes | Install the Helm CLI on the control planes, for root, with bash completion. Optional tooling: if the download fails, the bootstrap logs a warning and carries on. |
+| `helm_enabled` | `false` | New nodes | Install the Helm CLI on the control planes, for root, with bash completion. Optional tooling: if the download fails, the bootstrap logs a warning and carries on. [Add-ons](addons.md#use-helm) shows how to use it. |
 | `name_prefix` | `"kube-lab"` | Destroy first | Prefix for the cluster name. A random 4-character suffix is added, for example kube-lab-a1b2. |
 | `operator_cidrs` | required | Now | Public IPv4 CIDRs allowed to reach the Kubernetes API, for example ["203.0.113.10/32"]. Each prefix must be /8 or longer. |
 | `pod_cidr` | `"192.168.0.0/16"` | New cluster | Pod network CIDR (kubeadm podSubnet), used by both Calico and Cilium. Only used when the cluster is created. |
