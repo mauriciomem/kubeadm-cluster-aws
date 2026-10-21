@@ -4,6 +4,6 @@ output "message" {
 }
 
 output "status" {
-  description = "Status values keyed by \"cluster\" and by node name. \"unreadable\" for a SecureString, \"invalid\" for a value that isn't a status."
+  description = "Status values keyed by \"cluster\" and by node name."
   value       = local.status
 }

@@ -14,9 +14,8 @@ override_resource {
   }
 }
 
-# modules/status reads live SSM values. On a new cluster that waits for the apply, so its
-# cluster_ready check can't be evaluated in a plan, which terraform test reports as a
-# failure. tests/status.tftest.hcl tests the module on its own.
+# modules/status reads live SSM values, which a plan of a new cluster can't evaluate.
+# tests/status.tftest.hcl tests it on its own.
 override_module {
   target = module.status
   outputs = {
