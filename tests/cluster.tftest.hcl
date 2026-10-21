@@ -314,12 +314,14 @@ run "node_roles_can_do_their_job" {
   }
 
   assert {
-    condition = anytrue([
-      for s in data.aws_iam_policy_document.worker.statement :
-      s.effect != "Deny" && contains(s.actions, "ssm:PutParameter") &&
-      contains(s.resources, "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/nodes/worker-*")
+    condition = toset(flatten([
+      for s in data.aws_iam_policy_document.worker.statement : tolist(s.resources)
+      if s.effect != "Deny" && contains(s.actions, "ssm:PutParameter")
+      ])) == toset([
+      "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/nodes/worker-1/status",
+      "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/nodes/worker-4/status",
     ])
-    error_message = "Workers must be able to write the worker status parameters."
+    error_message = "Workers may write exactly the worker status parameters, by exact ARN."
   }
 
   assert {
@@ -334,10 +336,102 @@ run "node_roles_can_do_their_job" {
   assert {
     condition = anytrue([
       for s in data.aws_iam_policy_document.control_plane.statement :
-      s.effect != "Deny" && contains(s.actions, "ssm:GetParameter") && contains(s.actions, "ssm:PutParameter") &&
+      s.effect != "Deny" && contains(s.actions, "ssm:GetParameter") &&
       contains(s.resources, "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/*")
     ])
-    error_message = "Control planes must be able to read and write the whole cluster path."
+    error_message = "Control planes must be able to read the whole cluster path."
+  }
+
+  assert {
+    condition = toset(flatten([
+      for s in data.aws_iam_policy_document.control_plane.statement : tolist(s.resources)
+      if s.effect != "Deny" && contains(s.actions, "ssm:PutParameter")
+      ])) == toset([for name in [
+      "join/token", "join/ca-cert-hash", "join/certificate-key", "kubeconfig/admin", "status/cluster",
+      "nodes/cp-1/status", "nodes/cp-2/status", "nodes/cp-3/status",
+    ] : "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/${name}"])
+    error_message = "Control planes may write exactly the join material, the admin kubeconfig, the cluster status and the control-plane statuses, by exact ARN."
+  }
+
+  # Together, the two roles may write exactly the parameters Terraform creates.
+  assert {
+    condition = toset(flatten([
+      for statements in [data.aws_iam_policy_document.control_plane.statement, data.aws_iam_policy_document.worker.statement] : [
+        for s in statements : tolist(s.resources) if s.effect != "Deny" && contains(s.actions, "ssm:PutParameter")
+      ]
+    ])) == toset([for k in keys(local.parameters) : "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/${k}"])
+    error_message = "The PutParameter grants must cover exactly the parameters in ssm.tf."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for statements in [data.aws_iam_policy_document.control_plane.statement, data.aws_iam_policy_document.worker.statement] : [
+        for s in statements : [for r in s.resources : !strcontains(r, "*")]
+        if s.effect != "Deny" && contains(s.actions, "ssm:PutParameter")
+      ]
+    ]))
+    error_message = "No PutParameter grant may use a wildcard: in an ARN, * also matches /, so a node could create parameters that outlive destroy."
+  }
+
+  assert {
+    condition = alltrue([
+      for statements in [data.aws_iam_policy_document.control_plane.statement, data.aws_iam_policy_document.worker.statement] : anytrue([
+        for s in statements :
+        s.effect == "Deny" && s.actions == toset(["ssm:PutParameter"]) && s.resources == toset(["*"]) &&
+        anytrue([for c in s.condition : c.test == "StringEquals" && c.variable == "ssm:Policies" && tolist(c.values) == tolist(["true"])])
+      ])
+    ])
+    error_message = "Both roles must deny PutParameter with a parameter policy (ssm:Policies), which could make SSM delete a parameter."
+  }
+}
+
+# Scaling out from 1 to 3 workers grants the new workers their status parameters in the same
+# apply. The keys come from var.nodes, so the policy never waits on an instance.
+run "scale_out_grants_new_worker_status" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  variables {
+    nodes = {
+      cp-1     = { role = "control-plane", index = 0, init = true }
+      worker-1 = { role = "worker", index = 0, init = false }
+      worker-2 = { role = "worker", index = 1, init = false }
+      worker-3 = { role = "worker", index = 2, init = false }
+    }
+  }
+
+  assert {
+    condition = toset(flatten([
+      for s in data.aws_iam_policy_document.worker.statement : tolist(s.resources)
+      if s.effect != "Deny" && contains(s.actions, "ssm:PutParameter")
+    ])) == toset([for i in [1, 2, 3] : "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/nodes/worker-${i}/status"])
+    error_message = "Every worker, including new ones, must be able to write its status."
+  }
+}
+
+# With worker_count = 0 the worker role has no PutParameter statement at all: an empty
+# resource list would be an invalid policy.
+run "no_workers_no_worker_write" {
+  command = plan
+
+  module {
+    source = "./modules/cluster"
+  }
+
+  variables {
+    nodes = {
+      cp-1 = { role = "control-plane", index = 0, init = true }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.worker.statement : s.effect == "Deny" || !contains(s.actions, "ssm:PutParameter")
+    ])
+    error_message = "Without workers, the worker role must not allow PutParameter."
   }
 }
 
@@ -390,7 +484,7 @@ run "worker_cannot_read_control_plane_secrets" {
     condition = alltrue(flatten([
       for s in data.aws_iam_policy_document.control_plane.statement : [
         for r in s.resources : startswith(r, "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/")
-      ]
+      ] if s.effect != "Deny"
     ]))
     error_message = "Control-plane permissions must be scoped to the cluster's parameter path."
   }

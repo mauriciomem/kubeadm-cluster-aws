@@ -24,8 +24,9 @@
 #   Readers: scripts/wait-for-cluster.sh, Terraform (modules/status), and
 #   join_cluster (cp-N waits for cp-(N-1)).
 #   Status parameters are plain Strings, readable without decryption, so they must never
-#   carry anything else: ssm_put_status only writes values that match STATUS_PATTERN, and
-#   SSM rejects the rest too (allowed_pattern in modules/cluster/ssm.tf, the same regex).
+#   carry anything else: ssm_put_status only writes values that match STATUS_PATTERN.
+#   allowed_pattern in modules/cluster/ssm.tf (the same regex) catches a bug here; IAM
+#   decides who may write, and the readers treat any other value as "invalid".
 
 # shellcheck source-path=SCRIPTDIR source=../templates/cluster.env.tftpl
 source /etc/kube-lab/cluster.env

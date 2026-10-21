@@ -5,9 +5,11 @@
 # Two kinds of parameter:
 # - Secrets (join material, admin kubeconfig): SecureString. Terraform never reads them.
 # - Statuses: plain String, so Terraform can show them (modules/status) without
-#   decrypting anything. allowed_pattern makes SSM reject any value outside the status
-#   protocol, so a status can never carry a secret or free text. The nodes check the same
-#   pattern before they write (STATUS_PATTERN in bootstrap/files/lib.sh; a test keeps the two equal).
+#   decrypting anything. allowed_pattern makes SSM reject a value outside the status
+#   protocol from an honest node with a bug. It is not access control: a PutParameter
+#   request can replace the pattern, so IAM (iam.tf) decides who writes, and every reader
+#   checks the value again. The nodes check the same pattern before they write
+#   (STATUS_PATTERN in bootstrap/files/lib.sh; a test keeps the copies equal).
 # The status values are listed in docs/architecture.md and at the top of bootstrap/files/lib.sh.
 locals {
   # failed:<step>, where <step> is a run_step or run_always name in the node scripts.
