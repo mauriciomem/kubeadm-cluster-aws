@@ -196,7 +196,7 @@ variable "operator_cidrs" {
 
   validation {
     condition     = length(var.operator_cidrs) > 0
-    error_message = "operator_cidrs must list at least one CIDR."
+    error_message = "Set operator_cidrs in terraform.tfvars to your public IPv4 address as a /32, for example [\"203.0.113.10/32\"]. Find it with: curl -4 -s https://checkip.amazonaws.com"
   }
 
   validation {

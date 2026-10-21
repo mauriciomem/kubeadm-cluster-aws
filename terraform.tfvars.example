@@ -1,9 +1,10 @@
 # Copy this file to terraform.tfvars (git ignores it) and edit the copy.
 
-# Required. Your public IPv4 address as a /32. Only these addresses can reach the API.
-# Find it with:  curl -4 -s https://checkip.amazonaws.com
+# Required. Your public IPv4 address as a /32, for example ["203.0.113.10/32"]. Only these
+# addresses can reach the API. Find it with:  curl -4 -s https://checkip.amazonaws.com
+# Left empty, terraform plan stops and asks you to set it.
 # If your address changes (another network, a VPN), update this and run terraform apply.
-operator_cidrs = ["203.0.113.10/32"]
+operator_cidrs = []
 
 # Optional. The values shown are the defaults.
 # region              = "us-east-1"
@@ -12,5 +13,6 @@ operator_cidrs = ["203.0.113.10/32"]
 
 # Read only when the cluster or a node is created. Changing them later doesn't change
 # existing nodes; docs/configuration.md explains when each setting takes effect.
-# cni         = "calico"
-# k8s_version = "1.36.5"
+# cni          = "calico"
+# k8s_version  = "1.36.5"
+# helm_enabled = false
