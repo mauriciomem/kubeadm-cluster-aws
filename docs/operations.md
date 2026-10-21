@@ -39,9 +39,23 @@ kubeconfig_command` prints the script with your cluster's name and region, and
 ## Status parameters on a cluster created before they became Strings
 
 Status parameters are plain `String` parameters; they used to be `SecureString`. On a cluster
-created before that change, the first `terraform apply` with the current code converts them
-and resets them to `pending`. The cluster_ready check then warns that the cluster isn't ready.
-The cluster itself is unaffected: only the status values change.
+created before that change, the first `terraform apply` with the current code is expected to
+change them in place to `String` and reset them to `pending`. This hasn't been tested on a
+live cluster yet. The cluster_ready check then warns that the cluster isn't ready. The cluster
+itself is unaffected: only the status values change.
+
+If that apply fails on a status parameter, or every apply after it fails with a
+`ValidationException`, replace the parameters the error names. Use one `-replace` for each:
+
+```bash
+terraform apply \
+  -replace='module.cluster.aws_ssm_parameter.cluster["status/cluster"]' \
+  -replace='module.cluster.aws_ssm_parameter.cluster["nodes/cp-1/status"]'
+```
+
+Don't run the bootstrap again on a node created before the change. Its script writes the
+status back as a `SecureString`, and the next apply fails the same way. Replace the parameter
+as above if it happens.
 
 If the cluster was ready before, write the final values back. This needs
 `ssm:PutParameter` on the parameters:

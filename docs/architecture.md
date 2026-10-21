@@ -77,18 +77,22 @@ Terraform has no Kubernetes or Helm provider: cp-1 installs the add-ons itself. 
 never sees a cluster credential, and destroying the cluster still deletes every parameter.
 
 The status parameters are the exception that proves the rule: they are plain `String`
-parameters, and Terraform reads them (`modules/status`) to show progress. SSM only accepts
-status values in them (`allowed_pattern`), and the nodes check the same pattern before they
-write, so they can't hold a secret. Terraform reads each one by name, never the whole
-`/<cluster>/` path.
+parameters, and Terraform reads them (`modules/status`) to show progress. The nodes only write
+status values, and SSM rejects anything else (`allowed_pattern`) in case a script has a bug.
+That pattern isn't access control, because a write request can replace it, so Terraform and
+`wait-for-cluster.sh` check every value again and show anything else as `invalid`. Terraform
+reads each parameter by name, never the whole `/<cluster>/` path.
 
 ## Node permissions
 
-Control planes and workers get separate IAM roles. Control planes can read and write every
-parameter under `/<cluster>/`. Workers can read the join token and the CA certificate hash, and
-write the worker status parameters. All workers share one role, so a worker could overwrite
+Control planes and workers get separate IAM roles. Control planes can read every parameter
+under `/<cluster>/`, and write the ones they publish: the join material, the admin
+kubeconfig, the cluster status and their own statuses. Workers can read the join token and
+the CA certificate hash, and write the worker status parameters. Every write permission
+names the exact parameters Terraform created, so a node can't create new ones, and neither
+role may attach a parameter policy. All workers share one role, so a worker could overwrite
 another worker's status. That spoofing only changes what you see: no node waits on a worker's
-status, and SSM only accepts status values in the parameters Terraform created. Working out
+status, and anything that isn't a status value shows as `invalid`. Working out
 what else an attacker on a worker could do with that role is a good CKS exercise. An explicit
 Deny keeps the admin kubeconfig and the certificate key away from workers, even if someone
 attaches a broader policy later.
@@ -212,8 +216,9 @@ cluster's progress to `/<cluster>/status/cluster`.
 The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node.
 cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`,
 `refresh-timer` and `wait-nodes`; the other nodes run `join`. Control planes finish with
-`root-kubeconfig`, then `helm` when `helm_enabled` is set. `helm` is optional: if it fails, the
-log shows a `WARNING` and the node still reaches `joined`. Every failure reports the step that was running. The one exception is a
+`root-kubeconfig`, then `helm` when `helm_enabled` is set. `helm` runs after the node reports
+`joined`, and on cp-1 after the cluster reports `ready`, so it never delays them. It is
+optional: if it fails, the log shows a `WARNING`. Every failure reports the step that was running. The one exception is a
 node that can't install the AWS CLI: it can't report anything and stays at `pending`.
 
 ### SSM parameters

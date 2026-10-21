@@ -22,8 +22,9 @@ helm list -A
 ```
 
 On a control plane, set `helm_enabled = true` in `terraform.tfvars` before you create the
-cluster. The control planes then install Helm v3.22.1 (`helm_version`), with bash completion.
-The setting only applies to nodes created after you set it. Open a shell on the node
+cluster. The control planes then install Helm v3.22.1 (`helm_version`), with bash completion,
+just after the cluster is ready, so give it a minute. The setting only applies to nodes
+created after you set it. Open a shell on the node
 (`terraform output ssm_session_commands`), run `sudo -i`, and Helm uses root's kubeconfig.
 
 The commands you use most:
@@ -83,10 +84,15 @@ If `AVAILABLE` stays `False`, read `kubectl -n kube-system logs deploy/metrics-s
 error there usually means a kubelet serving certificate is still pending: see
 [Kubelet serving certificates stay Pending](troubleshooting.md#kubelet-serving-certificates-stay-pending).
 
-To remove it, use the method you installed with:
+To remove it, use the method you installed with. With the manifest:
 
 ```bash
 kubectl delete -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+```
+
+With Helm:
+
+```bash
 helm uninstall metrics-server -n kube-system
 ```
 

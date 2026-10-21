@@ -67,7 +67,7 @@ parameters don't exist yet. From then on, every plan and apply ends with a warni
 cluster is ready. While the nodes work, it reads:
 
 ```text
-Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. The nodes usually finish about 5 minutes after the first apply. ...
+Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. The nodes usually finish about 5 minutes after they're created. ...
 ```
 
 When a node fails, it names the node and the step:
@@ -79,6 +79,15 @@ Bootstrap failed: worker-2 at step join. Open a shell on that node (terraform ou
 The warning never blocks a plan, an apply or a destroy. `terraform output cluster_status` shows
 the same values as a map, but only as of the last `terraform apply` or
 `terraform apply -refresh-only`: `terraform output` doesn't read them again.
+
+When the plan also changes the cluster, for example when you add a worker, Terraform reads
+the statuses only after the apply. The plan then shows them as `(known after apply)`, and
+the warning appears at the end of the apply instead. While the nodes work, a plan that changes
+nothing else can list `cluster_status` under "Changes to Outputs". That's the progress, not
+drift.
+
+Reading the statuses needs `ssm:GetParameter` on `/<cluster>/status/cluster` and
+`/<cluster>/nodes/*/status`. Without it, the plan fails with `AccessDenied`.
 
 ### Once, from the script
 
@@ -126,6 +135,7 @@ parameter, which is far more than one bootstrap writes.
 | Value | Meaning | Typical time in this state |
 |---|---|---|
 | `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS CLI's error below the status line. The nodes may be fine. | Until you fix your credentials |
+| `invalid` | The parameter holds something that isn't a status value, so it isn't shown. The node scripts never write one, so someone changed the parameter by hand or from a node's shell. | |
 | `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute |
 | `bootstrapping` | Preparing the host and installing packages. | 1 to 3 minutes |
 | `initializing` | cp-1 runs `kubeadm init`. | About 1 minute |
@@ -160,7 +170,7 @@ command that failed. The steps below are in the order they run.
 | `wait-nodes` | cp-1 | Waits up to 30 minutes for every node to be `Ready`, then restarts CoreDNS so its two replicas spread across nodes | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
 | `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
 | `root-kubeconfig` | control planes | Copies `admin.conf` to `/root/.kube/config`, so `sudo -i` gives you a working kubectl | Check that `/etc/kubernetes/admin.conf` exists. |
-| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and adds its completion | Optional: a failure never shows as `failed:helm`. Look for `WARNING` in the log; a checksum mismatch or a failed download is the usual cause. |
+| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and writes its bash completion file. Runs after the node reports `joined` (and on cp-1 after the cluster reports `ready`) | Optional: a failure never shows as `failed:helm`. Look for `WARNING` in the log; a checksum mismatch or a failed download is the usual cause. A download that stalls gives up after a minute, and one that takes longer than 15 minutes is stopped. |
 
 ## Run the bootstrap again
 
@@ -175,6 +185,9 @@ sudo bash /var/lib/cloud/instance/scripts/worker.sh    # or control-plane.sh
 Each finished step leaves a marker in `/var/lib/kube-lab/`, such as `packages.done`. Delete a
 marker to make that step run again. `local-kubeconfig` and `root-kubeconfig` have no marker:
 they are quick and run every time.
+
+On a cluster created before the status parameters became Strings, read
+[this](operations.md#status-parameters-on-a-cluster-created-before-they-became-strings) first.
 
 If cp-1 fails at `init` and a reset doesn't help, the quickest fix is a new cluster:
 `terraform destroy`, then `terraform apply`.
