@@ -21,7 +21,7 @@ variables {
     service_cidr       = "10.96.0.0/12"
     calico             = { version = "v3.33.0", crds_sha256 = "0", operator_sha256 = "0" }
     cilium             = { version = "1.20.3", cli_version = "v0.20.1", cli_sha256 = "0" }
-    metrics_server     = { version = "v0.9.0", sha256 = "0" }
+    helm               = { enabled = false, version = "v3.22.1", sha256 = "0" }
     csr_approver       = { version = "v1.2.15", digest = "sha256:0" }
   }
 }

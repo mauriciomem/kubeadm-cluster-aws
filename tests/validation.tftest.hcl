@@ -264,14 +264,35 @@ run "cilium_cli_version_without_v_rejected" {
   expect_failures = [var.cilium_cli_version]
 }
 
-run "metrics_server_version_without_v_rejected" {
+run "helm_version_without_v_rejected" {
   command = plan
 
   variables {
-    metrics_server_version = "0.9.0"
+    helm_version = "3.22.1"
   }
 
-  expect_failures = [var.metrics_server_version]
+  expect_failures = [var.helm_version]
+}
+
+# cluster.env is sourced as root, and the value lands in a download URL.
+run "helm_version_with_shell_characters_rejected" {
+  command = plan
+
+  variables {
+    helm_version = "v3.22.1'; reboot; '"
+  }
+
+  expect_failures = [var.helm_version]
+}
+
+run "uppercase_helm_sha256_rejected" {
+  command = plan
+
+  variables {
+    helm_sha256 = "896CF63684A42A723D61C980369D6E588330927DEB13676CA0D85006DD6DA0EA"
+  }
+
+  expect_failures = [var.helm_sha256]
 }
 
 run "csr_approver_version_without_v_rejected" {

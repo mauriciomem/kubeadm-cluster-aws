@@ -38,8 +38,10 @@ locals {
       cilium_version         = var.software.cilium.version
       cilium_cli_version     = var.software.cilium.cli_version
       cilium_cli_sha256      = var.software.cilium.cli_sha256
-      metrics_server_version = var.software.metrics_server.version
-      metrics_server_sha256  = var.software.metrics_server.sha256
+      # Helm goes to the control planes only: root has a kubeconfig there.
+      helm_enabled = tostring(var.software.helm.enabled && n.role == "control-plane")
+      helm_version = var.software.helm.version
+      helm_sha256  = var.software.helm.sha256
     }
   }
 

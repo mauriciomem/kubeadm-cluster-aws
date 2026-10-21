@@ -11,7 +11,8 @@
 #   REGION, SSM_PREFIX        where this cluster's SSM parameters live
 #   API_ENDPOINT              the API load balancer, as host:port
 #   K8S_VERSION, K8S_MINOR, CONTAINERD_VERSION   package versions
-#   CNI, CALICO_*, CILIUM_*, METRICS_SERVER_*    add-on choice, versions and checksums
+#   CNI, CALICO_*, CILIUM_*                      CNI choice, versions and checksums
+#   HELM_ENABLED, HELM_VERSION, HELM_SHA256      optional Helm CLI ("true" on control planes only)
 #
 # Status protocol. docs/architecture.md (Status values) is the reference.
 #   /<cluster>/nodes/<node>/status, written by each node:
@@ -180,6 +181,31 @@ run_always() {
   log "starting"
   "$@"
   log "done"
+}
+
+#######################################
+# Like run_step, for optional tooling the cluster works without: a failure is logged as a
+# WARNING and the bootstrap carries on, with no failed:<step> status. The next run retries it.
+# The command runs inside an if, where bash ignores errexit, so it must check every command
+# it runs itself.
+# Globals: STATE_DIR, STEP (set to the step name)
+# Arguments: step name, then the command to run
+#######################################
+run_optional_step() {
+  local name=$1
+  shift
+  STEP=$name
+  if [[ -f $STATE_DIR/$name.done ]]; then
+    log "already done"
+    return 0
+  fi
+  log "starting (optional)"
+  if "$@"; then
+    touch "$STATE_DIR/$name.done"
+    log "done"
+  else
+    log "WARNING: optional step $name failed; the cluster is not affected. Run the bootstrap again to retry it"
+  fi
 }
 
 # --- Retry and wait ------------------------------------------------------------------

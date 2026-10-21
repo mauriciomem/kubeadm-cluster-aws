@@ -49,7 +49,8 @@ variable "software" {
       cli_version = string
       cli_sha256  = string
     })
-    metrics_server = object({
+    helm = object({
+      enabled = bool
       version = string
       sha256  = string
     })

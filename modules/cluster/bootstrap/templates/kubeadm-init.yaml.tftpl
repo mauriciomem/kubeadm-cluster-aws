@@ -48,6 +48,9 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 # The kubeadm default, stated so you can see it matches containerd's SystemdCgroup = true.
 cgroupDriver: systemd
+# Kubelets ask the cluster CA for their serving certificate instead of signing their own, so
+# anything that talks to a kubelet can verify it. Until kubelet-csr-approver approves the
+# CSR, the kubelet has no serving certificate and kubectl logs, exec and port-forward fail.
 serverTLSBootstrap: true
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1

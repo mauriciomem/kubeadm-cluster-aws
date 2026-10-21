@@ -139,6 +139,34 @@ variable "csr_approver_version" {
   }
 }
 
+variable "helm_enabled" {
+  type        = bool
+  description = "Install the Helm CLI on the control planes, for root, with bash completion. Optional tooling: if the download fails, the bootstrap logs a warning and carries on. Only used when a node is created."
+  default     = false
+}
+
+variable "helm_sha256" {
+  type        = string
+  description = "sha256 of helm-<helm_version>-linux-amd64.tar.gz from get.helm.sh."
+  default     = "896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.helm_sha256))
+    error_message = "helm_sha256 must be a lowercase hex sha256."
+  }
+}
+
+variable "helm_version" {
+  type        = string
+  description = "Helm release tag, with the leading v (for example v3.22.1)."
+  default     = "v3.22.1"
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.helm_version))
+    error_message = "helm_version must be a release tag such as v3.22.1, with the leading v."
+  }
+}
+
 variable "k8s_version" {
   type        = string
   description = "Kubernetes version the nodes install (kubeadm, kubelet, kubectl and the control plane). Only used when a node is created; to upgrade a running cluster, follow docs/labs/upgrade.md."
@@ -147,28 +175,6 @@ variable "k8s_version" {
   validation {
     condition     = can(regex("^1\\.[0-9]+\\.[0-9]+$", var.k8s_version))
     error_message = "k8s_version must look like 1.36.5, without a leading v; got \"${var.k8s_version}\"."
-  }
-}
-
-variable "metrics_server_sha256" {
-  type        = string
-  description = "sha256 of metrics-server's components.yaml for metrics_server_version."
-  default     = "1cec29a5267809306a2c6ec74a3e449abbb705b4a8beed0c8a1963910f72c79b"
-
-  validation {
-    condition     = can(regex("^[0-9a-f]{64}$", var.metrics_server_sha256))
-    error_message = "metrics_server_sha256 must be a lowercase hex sha256."
-  }
-}
-
-variable "metrics_server_version" {
-  type        = string
-  description = "metrics-server release tag, with the leading v (for example v0.9.0)."
-  default     = "v0.9.0"
-
-  validation {
-    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$", var.metrics_server_version))
-    error_message = "metrics_server_version must be a release tag such as v0.9.0, with the leading v."
   }
 }
 

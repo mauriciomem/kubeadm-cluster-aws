@@ -32,9 +32,10 @@ locals {
       cli_version = var.cilium_cli_version
       cli_sha256  = var.cilium_cli_sha256
     }
-    metrics_server = {
-      version = var.metrics_server_version
-      sha256  = var.metrics_server_sha256
+    helm = {
+      enabled = var.helm_enabled
+      version = var.helm_version
+      sha256  = var.helm_sha256
     }
     csr_approver = {
       version = var.csr_approver_version

@@ -55,7 +55,7 @@ run "kubeadm_init_config" {
 
   assert {
     condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/kubeadm-init.yaml.tmpl"], "serverTLSBootstrap: true\n")
-    error_message = "Kubelets must request serving certificates (for metrics-server without --kubelet-insecure-tls)."
+    error_message = "Kubelets must request serving certificates signed by the cluster CA, which kubelet-csr-approver approves."
   }
 
   assert {
@@ -131,7 +131,7 @@ run "user_data_hygiene" {
 
   assert {
     condition     = alltrue([for n in module.cluster.bootstrap : !strcontains(jsonencode(n), "kubelet-insecure-tls")])
-    error_message = "metrics-server must not be patched with --kubelet-insecure-tls."
+    error_message = "Nothing may turn off kubelet certificate verification with --kubelet-insecure-tls."
   }
 
   assert {
@@ -149,11 +149,55 @@ run "user_data_hygiene" {
   }
 }
 
-run "three_control_planes_fit_the_user_data_limit" {
+run "no_metrics_server" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for n in module.cluster.bootstrap : !strcontains(lower(jsonencode(n)), "metrics-server") && !strcontains(jsonencode(n), "METRICS_SERVER")])
+    error_message = "The bootstrap installs no metrics-server: install it yourself, with its manifest or Helm chart."
+  }
+}
+
+run "helm_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for n in module.cluster.bootstrap : strcontains(n.files["/etc/kube-lab/cluster.env"], "\nHELM_ENABLED='false'\n")
+    ])
+    error_message = "No node installs Helm unless helm_enabled is set."
+  }
+}
+
+run "helm_on_control_planes_only" {
   command = plan
 
   variables {
+    helm_enabled        = true
     control_plane_count = 3
+  }
+
+  assert {
+    condition = alltrue([
+      for k, n in module.cluster.bootstrap :
+      strcontains(n.files["/etc/kube-lab/cluster.env"], "\nHELM_ENABLED='${startswith(k, "cp-")}'\n")
+    ])
+    error_message = "With helm_enabled, every control plane installs Helm (root has a kubeconfig there) and no worker does."
+  }
+
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-2"].files["/etc/kube-lab/cluster.env"], "\nHELM_VERSION='v3.22.1'\nHELM_SHA256='896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea'\n")
+    error_message = "cluster.env must carry the pinned Helm version and checksum."
+  }
+}
+
+run "largest_bootstrap_fits_the_user_data_limit" {
+  command = plan
+
+  # Calico ships an extra manifest to cp-1; Helm adds its settings everywhere.
+  variables {
+    control_plane_count = 3
+    helm_enabled        = true
   }
 
   # Planning succeeds only if the precondition on aws_instance.node holds for every node.
@@ -238,6 +282,21 @@ run "static_guard_downloads_are_verified" {
   assert {
     condition     = !strcontains(module.cluster.bootstrap["cp-1"].script, "/tmp/cilium")
     error_message = "The cilium tarball must use mktemp, not a fixed /tmp path."
+  }
+}
+
+run "static_guard_helm_is_verified_and_optional" {
+  command = plan
+
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "fetch_verified \"https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz\" \"$HELM_SHA256\"")
+    error_message = "The Helm download must be checked against helm_sha256."
+  }
+
+  # run_step would report failed:helm and stop the bootstrap; Helm is optional tooling.
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "run_optional_step helm install_helm\n")
+    error_message = "A failed Helm install must log a warning, not fail the node."
   }
 }
 

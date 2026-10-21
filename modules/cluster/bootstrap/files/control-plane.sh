@@ -1,5 +1,6 @@
 #!/bin/bash
-# Control-plane bootstrap. cp-1 runs kubeadm init and installs the add-ons; the others join.
+# Control-plane bootstrap. cp-1 runs kubeadm init and installs the CNI and
+# kubelet-csr-approver; the others join.
 # Flow and status values: see main below, and the status protocol at the top of lib.sh.
 set -Eeuo pipefail
 
@@ -117,16 +118,23 @@ install_cni() {
   esac
 }
 
-# Kubelets request serving certs (serverTLSBootstrap); this controller approves the valid ones.
+# Kubelets request serving certs (serverTLSBootstrap); this controller approves the valid
+# ones. Without it, kubectl logs, exec and port-forward fail with "tls: internal error".
 install_csr_approver() {
   retry 5 kubectl apply -f /etc/kube-lab/kubelet-csr-approver.yaml
 }
 
-install_metrics_server() {
-  local manifest=/etc/kube-lab/metrics-server.yaml
-  fetch_verified "https://github.com/kubernetes-sigs/metrics-server/releases/download/$METRICS_SERVER_VERSION/components.yaml" \
-    "$METRICS_SERVER_SHA256" "$manifest"
-  retry 5 kubectl apply -f "$manifest"
+# Optional (helm_enabled), run by run_optional_step: errexit is off in here, so every
+# command is chained, and a failure only logs a warning.
+install_helm() {
+  local dir rc=0
+  dir=$(mktemp -d) || return 1
+  fetch_verified "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" "$HELM_SHA256" "$dir/helm.tar.gz" &&
+    tar -xzf "$dir/helm.tar.gz" -C "$dir" linux-amd64/helm &&
+    install -m 0755 "$dir/linux-amd64/helm" /usr/local/bin/helm &&
+    printf '%s\n' 'source <(helm completion bash)' >>/etc/bash.bashrc || rc=$?
+  rm -rf "$dir"
+  return "$rc"
 }
 
 enable_join_refresh() {
@@ -155,9 +163,6 @@ wait_for_all_nodes_ready() {
   kubectl -n kube-system rollout restart deployment/coredns &&
     kubectl -n kube-system rollout status deployment/coredns --timeout=5m ||
     log "CoreDNS did not restart cleanly; both replicas may still run on cp-1"
-  # Not fatal: nodes work without metrics, and a stuck rollout points at kubelet serving CSRs.
-  kubectl -n kube-system rollout status deployment/metrics-server --timeout=5m ||
-    log "metrics-server is not ready yet; check 'kubectl get csr' and the kubelet-csr-approver logs"
 }
 
 # cp-1 only. Node status: initializing -> initialized; cluster status: installing.
@@ -170,7 +175,6 @@ bootstrap_first_control_plane() {
   cluster_status installing
   run_step cni install_cni
   run_step csr-approver install_csr_approver
-  run_step metrics-server install_metrics_server
   run_step refresh-timer enable_join_refresh
   run_step wait-nodes wait_for_all_nodes_ready
 }
@@ -184,6 +188,10 @@ main() {
     run_step join join_cluster
   fi
   run_always root-kubeconfig setup_root_kubeconfig
+  # Root has a kubeconfig on every control plane, so that's where Helm goes.
+  if [[ $HELM_ENABLED == true ]]; then
+    run_optional_step helm install_helm
+  fi
   status joined
   # Last, so every node status is final once wait-for-cluster.sh sees ready.
   # A no-op except on cp-1.
