@@ -1,9 +1,9 @@
 # kube-lab
 
 kube-lab builds a plain kubeadm cluster on AWS for practice. One `terraform apply`
-gives you Kubernetes 1.36.5 with one control plane, two workers, Calico and metrics-server.
-About 20 minutes later every node is `Ready`, and the cluster is yours to upgrade, back up,
-break and harden.
+gives you Kubernetes 1.36.5 with one control plane, two workers and Calico.
+A few minutes after `terraform apply` finishes, every node is `Ready`, and the cluster is yours
+to upgrade, back up, break and harden.
 
 Run `terraform destroy` when you finish a session. It's built for learning, not
 for production.
@@ -23,7 +23,8 @@ The nodes run in private subnets, with no public IPs and no SSH.
 With a narrower role than admin, `terraform apply` needs the permissions listed in
 [AWS permissions](docs/architecture.md#aws-permissions). The helper scripts and node shells
 need `ssm:GetParameter`, `ssm:GetParametersByPath`, `ssm:StartSession`,
-`ssm:TerminateSession` and `ssm:ResumeSession`.
+`ssm:TerminateSession` and `ssm:ResumeSession`, plus `ssm:GetParameterHistory` for
+`wait-for-cluster.sh --history`.
 
 ## Create the cluster
 
@@ -37,9 +38,10 @@ terraform init
 terraform apply
 ```
 
-Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot, which
-takes another 10 to 20 minutes. This script shows their progress and returns when the cluster
-is ready or a node fails:
+Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot. That
+usually takes about 5 minutes after `terraform apply` finishes, a little longer with three
+control planes. This script shows their progress and returns when the cluster is ready or a
+node fails (output abridged):
 
 ```bash
 ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
@@ -47,11 +49,12 @@ is ready or a node fails:
 
 ```text
 Waiting for kube-lab-a1b2 in us-east-1 (up to 40 min)...
-14:02:11 cluster=pending cp-1=pending worker-1=pending worker-2=pending
-14:06:40 cluster=pending cp-1=initializing worker-1=waiting worker-2=waiting
-14:09:12 cluster=installing cp-1=initialized worker-1=joining worker-2=joined
-14:17:30 cluster=ready cp-1=joined worker-1=joined worker-2=joined
-Cluster is ready. Next: ./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1
+12:02:04 cluster=pending cp-1=pending worker-1=pending worker-2=pending
+12:03:10 cluster=pending cp-1=initializing worker-1=waiting worker-2=waiting
+12:04:20 cluster=installing cp-1=initialized worker-1=joining worker-2=joined
+12:05:50 cluster=ready cp-1=joined worker-1=joined worker-2=joined
+Cluster is ready. Point kubectl at it with:
+  eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
 ```
 
 Now fetch the admin kubeconfig:
@@ -62,13 +65,14 @@ kubectl get nodes
 ```
 
 The script saves the kubeconfig to `~/.kube/<cluster>.yaml` and prints an
-`export KUBECONFIG=...` line, which `eval` runs in your shell. To make `terraform apply` itself
-wait for the cluster, set `wait_for_cluster = true`.
+`export KUBECONFIG=...` line, which `eval` runs in your shell. A script can't change your
+shell's environment by itself, so if you run it without `eval` it prints the commands to copy
+instead. To make `terraform apply` itself wait for the cluster, set `wait_for_cluster = true`.
 
 ## Use the cluster
 
-Use kubectl as with any cluster. `kubectl top nodes` starts working a minute or two after the
-cluster is ready. For a shell on a node, copy its command from
+Use kubectl as with any cluster. There is no metrics-server, so `kubectl top` doesn't work
+until you install one. For a shell on a node, copy its command from
 `terraform output ssm_session_commands`, then run `sudo -i`. On the control planes, root has
 kubectl set up, with the `k` alias and completion.
 

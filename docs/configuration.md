@@ -33,11 +33,12 @@ plane runs, which the Kubernetes version skew policy doesn't allow. Upgrade with
 | `cni` | `"calico"` | New cluster | Network plugin: calico (the default, tested on 1.36 and 1.37) or cilium. Installed once, when the cluster is created. |
 | `control_plane_count` | `1` | Now, with care | Number of control-plane nodes: 1, 3, 5 or 7 (odd, so etcd keeps quorum). Read docs/operations.md before you lower it on a running cluster. |
 | `control_plane_instance_type` | `"t3.medium"` | Now, restarts nodes | EC2 instance type for control-plane nodes. Must be x86_64; kubeadm needs at least 2 vCPUs and 2 GiB of memory. |
+| `helm_enabled` | `false` | New nodes | Install the Helm CLI on the control planes, for root, with bash completion. Optional tooling: if the download fails, the bootstrap logs a warning and carries on. |
 | `name_prefix` | `"kube-lab"` | Destroy first | Prefix for the cluster name. A random 4-character suffix is added, for example kube-lab-a1b2. |
 | `operator_cidrs` | required | Now | Public IPv4 CIDRs allowed to reach the Kubernetes API, for example ["203.0.113.10/32"]. Each prefix must be /8 or longer. |
 | `pod_cidr` | `"192.168.0.0/16"` | New cluster | Pod network CIDR (kubeadm podSubnet), used by both Calico and Cilium. Only used when the cluster is created. |
 | `region` | `"us-east-1"` | Destroy first | AWS region to create the cluster in. |
-| `root_volume_size` | `30` | Now | Root EBS volume size in GiB for every node, at least 20. EBS volumes can grow but not shrink. |
+| `root_volume_size` | `30` | Now | Root EBS volume size in GiB for every node, at least 20. EBS volumes can grow but not shrink. The filesystem grows at the next reboot. |
 | `service_cidr` | `"10.96.0.0/12"` | New cluster | Service CIDR (kubeadm serviceSubnet). Only used when the cluster is created. |
 | `single_nat_gateway` | `true` | Now | Use one NAT gateway for all AZs (cheaper). Set false for one per AZ. |
 | `tags` | `{}` | Now | Extra tags applied to every AWS resource. |
@@ -63,9 +64,9 @@ digest. Checksums are shortened here; `variables.tf` has the full values.
 | `containerd_version` | `"2.3.*"` | New nodes | Version of the containerd.io package from Docker's apt repository. Accepts an apt pattern such as 2.3.*. |
 | `csr_approver_digest` | `sha256:6469ef51…7818` | New cluster | Image index digest of ghcr.io/postfinance/kubelet-csr-approver for csr_approver_version. |
 | `csr_approver_version` | `"v1.2.15"` | New cluster | kubelet-csr-approver release tag, with the leading v. It approves the kubelets' serving certificates. |
+| `helm_sha256` | `896cf636…a0ea` | New nodes | sha256 of helm-<helm_version>-linux-amd64.tar.gz from get.helm.sh. |
+| `helm_version` | `"v3.22.1"` | New nodes | Helm release tag, with the leading v (for example v3.22.1). |
 | `k8s_version` | `"1.36.5"` | New nodes | Kubernetes version the nodes install (kubeadm, kubelet, kubectl and the control plane). Only used when a node is created; to upgrade a running cluster, follow docs/labs/upgrade.md. |
-| `metrics_server_sha256` | `1cec29a5…c79b` | New cluster | sha256 of metrics-server's components.yaml for metrics_server_version. |
-| `metrics_server_version` | `"v0.9.0"` | New cluster | metrics-server release tag, with the leading v (for example v0.9.0). |
 
 ## Examples
 

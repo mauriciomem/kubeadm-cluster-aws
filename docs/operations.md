@@ -18,7 +18,22 @@ eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(t
 
 This downloads the admin kubeconfig from SSM to `~/.kube/<cluster>.yaml` and sets
 `KUBECONFIG` for the current shell. Run it in every new terminal, or point `KUBECONFIG` at the
-file yourself.
+file yourself. Without `eval`, the script can't set `KUBECONFIG`, so it prints the commands to
+copy instead.
+
+## Status parameters on a cluster created before they became Strings
+
+Status parameters are plain `String` parameters (they used to be `SecureString`). On a cluster
+created before that change, the next `terraform apply` converts them and resets them to
+`pending`, and the `cluster_ready` check then warns that the cluster isn't ready. The cluster
+itself is unaffected. To show the real values again, write them back:
+
+```bash
+c=$(terraform output -raw cluster_name) r=$(terraform output -raw region)
+aws ssm put-parameter --region "$r" --overwrite --name "/$c/status/cluster" --value ready
+for n in $(terraform output -json nodes | jq -r 'keys[]'); do aws ssm put-parameter --region "$r" --overwrite --name "/$c/nodes/$n/status" --value joined; done
+terraform apply -refresh-only
+```
 
 ## Open a shell on a node
 

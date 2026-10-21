@@ -25,9 +25,10 @@ Run these from the repository root before you open a pull request. CI runs the s
 terraform fmt -check -recursive
 terraform init -backend=false && terraform validate
 tflint --init && tflint --recursive
-shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh
+shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh tests/*.sh
 ./scripts/render-templates.sh
 terraform test
+bash tests/scripts.sh
 trivy config --quiet --severity HIGH,CRITICAL .
 ./scripts/validate-kubeadm-config.sh
 ```
@@ -52,8 +53,8 @@ In CI the Trivy job is advisory: it reports findings without failing the build.
 ## Tests
 
 `terraform test` runs the files in `tests/` against mocked AWS providers, so it needs no
-credentials and creates nothing. It also reads your `terraform.tfvars`, and the tests expect
-the defaults, so move that file aside while you run them.
+credentials and creates nothing. The tests pin the values they assume, so your
+`terraform.tfvars` doesn't affect them.
 
 | File | What it covers |
 |---|---|
@@ -63,7 +64,12 @@ the defaults, so move that file aside while you run them.
 | `tests/network.tftest.hcl` | `modules/network` on its own: AZ selection by instance type |
 | `tests/user_data.tftest.hcl` | Which files reach which node and what is rendered into them |
 | `tests/cni.tftest.hcl` | What changes with `cni` |
+| `tests/status.tftest.hcl` | `modules/status` on its own: the `cluster_ready` check and its messages |
 | `tests/validation.tftest.hcl` | Every input validation rule |
+
+`tests/scripts.sh` is plain bash. It runs `get-kubeconfig.sh`, `wait-for-cluster.sh` and the
+status helpers in `lib.sh` against a fake `aws` on `PATH`, with `/bin/bash` (set `TEST_BASH` to
+use another). On macOS that is bash 3.2, the oldest version the operator scripts support.
 
 The `static_guard_*` runs in `user_data.tftest.hcl` are different from the rest. They check the
 text of shell files that Terraform copies without changing, to stop known mistakes from coming
@@ -81,7 +87,7 @@ Changes to the node scripts also need a real cluster: create one, check that eve
 Most pins are variables in `variables.tf`, each with its checksum next to it.
 
 1. Change the version variable: `k8s_version`, `containerd_version`, `calico_version`,
-   `cilium_version`, `cilium_cli_version`, `metrics_server_version` or `csr_approver_version`.
+   `cilium_version`, `cilium_cli_version`, `csr_approver_version` or `helm_version`.
 2. Recompute the matching checksum from the exact file the nodes download. On macOS, use
    `shasum -a 256` instead of `sha256sum`.
 
@@ -94,19 +100,13 @@ Most pins are variables in `variables.tf`, each with its checksum next to it.
    curl -fsSL "$base/tigera-operator.yaml" | sha256sum         # calico_operator_sha256
    ```
 
-   metrics-server:
-
-   ```bash
-   v=v0.9.0
-   curl -fsSL "https://github.com/kubernetes-sigs/metrics-server/releases/download/$v/components.yaml" | sha256sum
-   ```
-
    For `cilium_cli_sha256`, take the value from the release's
-   `cilium-linux-amd64.tar.gz.sha256sum` file. For `csr_approver_digest`, take the image index
+   `cilium-linux-amd64.tar.gz.sha256sum` file. For `helm_sha256`, take it from
+   `https://get.helm.sh/helm-<version>-linux-amd64.tar.gz.sha256sum`. For `csr_approver_digest`, take the image index
    digest of `ghcr.io/postfinance/kubelet-csr-approver:<version>`, for example with
    `crane digest` or `docker buildx imagetools inspect`.
 3. Check compatibility: the containerd release matrix for your Kubernetes version, the Kubernetes
-   versions Calico or Cilium support, and the metrics-server compatibility table.
+   versions Calico or Cilium support, and the Helm version skew policy.
 4. Run the checks above, then create a fresh cluster and check that it reaches `ready`.
 5. If you changed a default, update the tables in `docs/configuration.md` and any version the
    docs mention, such as the etcd version in the labs.

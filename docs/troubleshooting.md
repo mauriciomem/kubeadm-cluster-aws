@@ -7,8 +7,9 @@ about it.
 ## First steps
 
 1. Print the statuses. `wait-for-cluster.sh` exits with 0 when the cluster is ready, 1 when a
-   node reports a failure, 2 when it times out after 40 minutes and 3 when the AWS CLI can't
-   read the cluster's status at all. In that last case it prints the AWS error, such as expired
+   node reports a failure, 2 when it gives up after 40 minutes and 3 when the AWS CLI can't
+   read the cluster's status at all. `--once` prints the statuses once (exit 4 while still in
+   progress), and `--history` shows when each status changed and how long each step took. In that last case it prints the AWS error, such as expired
    credentials or a parameter that doesn't exist in that region. `--help` shows the usage:
 
    ```bash
@@ -63,10 +64,10 @@ Four things to know:
 | Value | Meaning | Typical time in this state |
 |---|---|---|
 | `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS error on the next line. The nodes may be fine. | Until you fix your credentials |
-| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | 1 to 5 minutes |
-| `bootstrapping` | Preparing the host and installing packages. | 3 to 8 minutes |
-| `initializing` | cp-1 runs `kubeadm init`. | 2 to 5 minutes |
-| `initialized` | cp-1 installs the network plugin and add-ons, then waits until every node is `Ready`. | 5 to 15 minutes, up to 30 |
+| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute |
+| `bootstrapping` | Preparing the host and installing packages. | 1 to 3 minutes |
+| `initializing` | cp-1 runs `kubeadm init`. | About 1 minute |
+| `initialized` | cp-1 installs the network plugin and kubelet-csr-approver, then waits until every node is `Ready`. | 2 to 5 minutes; gives up after 30 |
 | `waiting` | A joining node waits for the join token, the previous control plane and the API. | Until cp-1 is `initialized` |
 | `joining` | `kubeadm join` runs. | 1 to 3 minutes |
 | `joined` | Done. | |
@@ -93,11 +94,11 @@ command that failed. The steps below are in the order they run.
 | `local-kubeconfig` | cp-1 | Writes a kubeconfig for the local API server to `/run/kube-lab`, which the add-on steps use | The log shows whether the instance metadata lookup or the copy failed. |
 | `cni` | cp-1 | Installs Calico or Cilium and waits up to 15 minutes for it | Calico: `kubectl get tigerastatus` and `kubectl -n tigera-operator logs deploy/tigera-operator`. Cilium: `kubectl -n kube-system get pods -l k8s-app=cilium` and the cilium-operator pods. `cilium status` only works once the kubelets' serving certificates are approved, normally within a minute of the bootstrap. A checksum mismatch in the log means the pinned sha256 doesn't match the download. If `kubectl logs` fails with `tls: internal error`, see [below](#kubectl-logs-or-exec-fails-with-tls-internal-error). |
 | `csr-approver` | cp-1 | Applies kubelet-csr-approver | Read the log; the API server must be reachable on cp-1. |
-| `metrics-server` | cp-1 | Downloads, checks and applies metrics-server | A checksum mismatch or a failed download. |
 | `refresh-timer` | cp-1 | Enables the join-token refresh timer | `systemctl status kube-lab-refresh-join.timer`. |
 | `wait-nodes` | cp-1 | Waits up to 30 minutes for every node to be `Ready`, then restarts CoreDNS so its two replicas spread across nodes | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
 | `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
 | `root-kubeconfig` | control planes | Copies `admin.conf` to `/root/.kube/config`, so `sudo -i` gives you a working kubectl | Check that `/etc/kubernetes/admin.conf` exists. |
+| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and adds its completion | Optional: a failure never shows as `failed:helm`. Look for `WARNING` in the log; a checksum mismatch or a failed download is the usual cause. |
 
 ## Run the bootstrap again
 
@@ -139,11 +140,10 @@ aws elbv2 describe-target-health --region "$region" --target-group-arn "$tg"
 A new target stays `initial` for a minute or two. If cp-1 stays `unhealthy`, its API server
 isn't running: check `crictl ps -a` on cp-1.
 
-### kubectl top fails
+### Kubelet serving certificates stay Pending
 
-metrics-server needs every kubelet to have a serving certificate. kubelet-csr-approver
-approves them, but only for node names like `cp-1` or `worker-2` with an IP inside the private
-subnets.
+Every kubelet asks for a serving certificate. kubelet-csr-approver approves them, but only for
+node names like `cp-1` or `worker-2` with an IP inside the private subnets.
 
 ```bash
 kubectl get csr
