@@ -84,12 +84,20 @@ EOF
 }
 
 # Fail fast when the AWS CLI can't work at all, instead of waiting for the timeout. Its own
-# error message is already on stderr.
-if ! line=$(read_statuses); then
-  echo "Can't read the status of $cluster in $region. Check your AWS credentials" >&2
-  echo "(aws sts get-caller-identity), the region and the cluster name." >&2
+# error message is shown first.
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+if ! line=$(read_statuses 2>"$err"); then
+  cat "$err" >&2
+  if grep -q ParameterNotFound "$err"; then
+    echo "No cluster '$cluster' in region $region. Check the name: terraform output -raw cluster_name" >&2
+  else
+    echo "Can't read the status of $cluster in $region. Check your AWS credentials" >&2
+    echo "(aws sts get-caller-identity), the region and the cluster name." >&2
+  fi
   exit 3
 fi
+rm -f "$err"
 
 case $mode in
   history)

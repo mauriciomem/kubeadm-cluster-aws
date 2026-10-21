@@ -31,8 +31,19 @@ cluster=$1
 region=$2
 dest="$HOME/.kube/$cluster.yaml"
 
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+rc=0
 value=$(aws ssm get-parameter --region "$region" --name "/$cluster/kubeconfig/admin" \
-  --with-decryption --query Parameter.Value --output text)
+  --with-decryption --query Parameter.Value --output text 2>"$err") || rc=$?
+if [[ $rc -ne 0 ]]; then
+  if grep -q ParameterNotFound "$err"; then
+    echo "No kubeconfig for cluster '$cluster' in region $region. Check the name: terraform output -raw cluster_name" >&2
+  else
+    cat "$err" >&2
+  fi
+  exit "$rc"
+fi
 if [[ $value == pending ]]; then
   echo "The kubeconfig is not published yet; run $(dirname "$0")/wait-for-cluster.sh $cluster $region first." >&2
   exit 1

@@ -39,11 +39,12 @@ them with:
 ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
 ```
 
-When it prints "The API is up", about 2.5 minutes later, open a second terminal and run the
-`eval` line it shows, such as the first line below. Then watch the nodes turn `Ready`:
+When it prints "The API is up", about 2.5 minutes later, open a second terminal in this
+directory and run the first line below. It's the `eval` line the wait script prints, with the
+name filled in. Then watch the nodes turn `Ready`:
 
 ```bash
-eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
+eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
 kubectl get nodes -w
 ```
 

@@ -167,6 +167,23 @@ check "get-kubeconfig: pending points at wait-for-cluster.sh" contains "$work/er
 check "get-kubeconfig: pending writes no file" test ! -e "$HOME/.kube/kube-lab-t2.yaml"
 check "get-kubeconfig: pending prints nothing to eval" test ! -s "$work/out"
 
+# A wrong cluster name (the README's example pasted as is) says what to check.
+reset_aws
+"$test_bash" "$get_kubeconfig" kube-lab-nope us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "get-kubeconfig: an unknown cluster exits non-zero" test "$rc" -ne 0
+check "get-kubeconfig: an unknown cluster is named" contains "$work/err" "No kubeconfig for cluster 'kube-lab-nope' in region us-east-1"
+check "get-kubeconfig: an unknown cluster points at terraform output" contains "$work/err" "terraform output -raw cluster_name"
+check "get-kubeconfig: an unknown cluster prints nothing to eval" test ! -s "$work/out"
+
+# Other AWS CLI errors keep its own message.
+touch "$FAKE_AWS_DIR/fail"
+"$test_bash" "$get_kubeconfig" kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "get-kubeconfig: AWS CLI errors keep its exit code" test "$rc" -eq 254
+check "get-kubeconfig: AWS CLI errors are shown" contains "$work/err" "ExpiredTokenException"
+check "get-kubeconfig: AWS CLI errors print nothing to eval" test ! -s "$work/out"
+
 "$test_bash" "$get_kubeconfig" kube-lab-t1 >"$work/out" 2>"$work/err"
 check "get-kubeconfig: a missing argument exits 64" test $? -eq 64
 "$test_bash" "$get_kubeconfig" --help >"$work/out" 2>"$work/err"
@@ -201,6 +218,12 @@ check "wait: AWS CLI errors exit 3" test "$rc" -eq 3
 check "wait: AWS CLI errors are shown" contains "$work/err" "ExpiredTokenException"
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
 check "wait: AWS CLI errors exit 3 without --once" test $? -eq 3
+
+reset_aws
+"$test_bash" "$wait_script" --once kube-lab-nope us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait: an unknown cluster exits 3" test "$rc" -eq 3
+check "wait: an unknown cluster points at terraform output" contains "$work/err" "No cluster 'kube-lab-nope' in region us-east-1. Check the name: terraform output -raw cluster_name"
 
 cluster_with ready joined joined
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
