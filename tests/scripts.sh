@@ -305,6 +305,29 @@ rm -f "$node/state/sleeps" "$node/state/tries"
 "$test_bash" "$node/wait.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
 check "lib.sh: wait_for polls every 10 s, retry backs off" test "$(cat "$node/state/sleeps" 2>/dev/null)" = "10 10 | 5 10 "
 
+# The final statuses are the signal everything waits on, so a transient SSM error is retried.
+# The fake sleep clears the error before the second attempt.
+cat >"$node/final.sh" <<'EOF'
+set -Eeuo pipefail
+source "$1"
+status joined
+cluster_status ready
+EOF
+reset_aws
+touch "$FAKE_AWS_DIR/fail"
+printf 'rm -f "$FAKE_AWS_DIR/fail"\n' >"$FAKE_AWS_DIR/on_sleep"
+"$test_bash" "$node/final.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
+check "lib.sh: a node status write is retried after an SSM error" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/nodes/cp-1/status" 2>/dev/null)" = joined
+check "lib.sh: the cluster status write is retried after an SSM error" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/status/cluster" 2>/dev/null)" = ready
+
+# A status write that keeps failing is logged, and the bootstrap goes on.
+reset_aws
+touch "$FAKE_AWS_DIR/fail"
+"$test_bash" "$node/final.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
+check "lib.sh: a status write that keeps failing doesn't stop the bootstrap" test $? -eq 0
+check "lib.sh: a status write that keeps failing is logged" contains "$work/err" "could not publish cluster status 'ready'"
+check "lib.sh: a status write is tried 3 times" test "$(grep -c 'put-parameter' "$FAKE_AWS_DIR/calls")" -eq 6
+
 if "$node_bash" -c '((BASH_VERSINFO[0] >= 4))' 2>/dev/null; then
   reset_aws
   "$node_bash" "$node/test.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"

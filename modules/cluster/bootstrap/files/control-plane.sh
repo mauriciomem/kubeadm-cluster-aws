@@ -117,7 +117,7 @@ install_csr_approver() {
 }
 
 # helm_enabled: the Helm CLI. Completion goes into a static file, so no shell runs helm at
-# startup.
+# startup. Generating it needs no kubeconfig or network.
 install_helm() {
   local dir
   dir=$(mktemp -d)
@@ -174,16 +174,18 @@ bootstrap_first_control_plane() {
 main() {
   start_bootstrap
   prepare_node
+  # Root has a kubeconfig on every control plane, so that's where Helm goes. It needs no
+  # cluster, so it runs before kubeadm: a failed download stops this node before it joins
+  # or holds up the next control plane.
+  if [[ $HELM_ENABLED == true ]]; then
+    run_step helm install_helm
+  fi
   if [[ $IS_INIT_NODE == true ]]; then
     bootstrap_first_control_plane
   else
     run_step join join_cluster
   fi
   run_always root-kubeconfig setup_root_kubeconfig
-  # Root has a kubeconfig on every control plane, so that's where Helm goes.
-  if [[ $HELM_ENABLED == true ]]; then
-    run_step helm install_helm
-  fi
   status joined
   # Last, so every node status is final once wait-for-cluster.sh sees ready. cp-1 only.
   cluster_status ready

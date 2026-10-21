@@ -45,18 +45,22 @@ ssm_get() {
     --with-decryption --query Parameter.Value --output text
 }
 
-# Publishes this node's status. Never fails: a lost update must not stop the bootstrap.
-# Terraform owns the parameter's type and allowed_pattern (modules/cluster/ssm.tf).
+# put_status <name> <value>: writes a status parameter. Terraform owns its type and
+# allowed_pattern (modules/cluster/ssm.tf), so neither is set here.
+put_status() {
+  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/$1" --overwrite --value "$2" >/dev/null
+}
+
+# Publishes this node's status. Retried, because wait-for-cluster.sh can only see what
+# arrives, but never fails: a lost update must not stop the bootstrap.
 status() {
-  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/nodes/$NODE_NAME/status" \
-    --overwrite --value "$1" >/dev/null || log "could not publish node status '$1'"
+  retry 3 put_status "nodes/$NODE_NAME/status" "$1" || log "could not publish node status '$1'"
 }
 
 # Publishes the cluster status; only cp-1 does.
 cluster_status() {
   [[ $IS_INIT_NODE == true ]] || return 0
-  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/status/cluster" \
-    --overwrite --value "$1" >/dev/null || log "could not publish cluster status '$1'"
+  retry 3 put_status status/cluster "$1" || log "could not publish cluster status '$1'"
 }
 
 # ERR trap: reports failed:<step>, then exits.
@@ -154,11 +158,13 @@ imds() {
 }
 
 # fetch_verified <url> <sha256> <dest>: downloads a file and checks its pinned checksum.
-# The file only appears at dest once it has passed. --max-time turns a stalled download
-# into a failure that retry can repeat. The URL comes first so retry's log line shows it.
+# The file only appears at dest once it has passed. The URL comes first so retry's log
+# line shows it.
 fetch_verified() {
   local url=$1 sha256=$2 dest=$3
-  retry 5 curl "$url" -fsSL --max-time 600 -o "$dest.download"
+  # A transfer that stalls (under 1 KB/s for a minute) fails fast, so retry starts a fresh
+  # one instead of waiting out the 10-minute cap.
+  retry 5 curl "$url" -fsSL --max-time 600 --speed-limit 1024 --speed-time 60 -o "$dest.download"
   if ! echo "$sha256  $dest.download" | sha256sum --check --quiet -; then
     rm -f "$dest.download"
     log "checksum mismatch for $url"

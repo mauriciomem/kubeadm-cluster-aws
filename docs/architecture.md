@@ -200,12 +200,12 @@ cp-1 publishes the admin kubeconfig, so kubectl works from then on, and `ready` 
 is `Ready`. [Troubleshooting](troubleshooting.md#status-values) explains each value and how long
 it usually lasts.
 
-The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node.
-cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`, `refresh-timer`
-and `wait-nodes`; the other nodes run `join`. Control planes finish with `root-kubeconfig`,
-then `helm` when `helm_enabled` is set, before they report `joined`. A failure reports the step
-that was running, except in `awscli`: without the AWS CLI the node can't report anything and
-stays `pending`.
+The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node,
+then `helm` on control planes when `helm_enabled` is set. cp-1 then runs `init`, `publish`,
+`local-kubeconfig`, `cni`, `csr-approver`, `refresh-timer` and `wait-nodes`; the other nodes
+run `join`. Control planes finish with `root-kubeconfig` before they report `joined`. A failure
+reports the step that was running, except in `awscli`: without the AWS CLI the node can't
+report anything and stays `pending`.
 
 ### SSM parameters
 

@@ -172,6 +172,7 @@ command that failed. The steps below are in the order they run.
 | `packages` | all | Installs containerd, kubeadm, kubelet and kubectl from the Docker and Kubernetes apt repositories | A repository or mirror was down, `containerd_version` matches no package, or an apt signing key changed. A key mismatch stops the bootstrap on purpose: check the new key's fingerprint against the Docker and Kubernetes install docs before you update `lib.sh`. |
 | `containerd` | all | Writes `/etc/containerd/config.toml` (CRI on, systemd cgroups) and restarts containerd | `journalctl -u containerd`. |
 | `shell` | all | Adds kubectl completion and the `k` alias for every user | Read the log. This rarely fails. |
+| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and writes its bash completion file, before `kubeadm init` or `join` | A checksum mismatch or a failed download is the usual cause. Every download is retried 5 times; an attempt stops after 10 minutes, or after a minute with almost no data. |
 | `init` | cp-1 | Runs `kubeadm init` | `crictl ps -a` and `crictl logs <container-id>` for the control-plane containers, and `journalctl -u kubelet`. |
 | `publish` | cp-1 | Writes the join token, CA hash, certificate key and admin kubeconfig to SSM | Look for `AccessDenied` in the log. A re-run skips `init` and creates a new token and certificate key. |
 | `local-kubeconfig` | cp-1 | Writes a kubeconfig for the local API server to `/run/kube-lab`, which the add-on steps use | The log shows whether the instance metadata lookup or the copy failed. |
@@ -181,7 +182,6 @@ command that failed. The steps below are in the order they run.
 | `wait-nodes` | cp-1 | Waits up to 30 minutes for every node to be `Ready`, then restarts CoreDNS so its two replicas spread across nodes | `kubectl get nodes`, then the status and log of the node that isn't `Ready`. |
 | `join` | joining nodes | Waits for the join token and the previous control plane (40 minutes each) and for the API (15 minutes), checking every 10 seconds, then runs `kubeadm join` | The log says what it was waiting for. Waiting on the token: check cp-1. Waiting on the API: check the load balancer (below). `kubeadm join` itself failed: `journalctl -u kubelet`. |
 | `root-kubeconfig` | control planes | Copies `admin.conf` to `/root/.kube/config`, so `sudo -i` gives you a working kubectl | Check that `/etc/kubernetes/admin.conf` exists. |
-| `helm` | control planes, with `helm_enabled` | Downloads and checks the Helm CLI, and writes its bash completion file, before the node reports `joined` | A checksum mismatch or a failed download is the usual cause. Every download is retried 5 times, and each attempt is stopped after 10 minutes. |
 
 ## Run the bootstrap again
 
