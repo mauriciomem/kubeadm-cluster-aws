@@ -138,3 +138,32 @@ run "scaling_workers_keeps_existing_keys" {
     error_message = "Scaling up must only append worker keys."
   }
 }
+
+run "outputs_point_at_this_cluster" {
+  command = plan
+
+  assert {
+    condition     = output.cluster_status == { cluster = "ready" }
+    error_message = "cluster_status must come from modules/status."
+  }
+
+  assert {
+    condition     = output.status_command == "./scripts/wait-for-cluster.sh --once kube-lab-test us-east-1"
+    error_message = "status_command must run wait-for-cluster.sh --once for this cluster."
+  }
+
+  assert {
+    condition     = output.kubeconfig_command == "./scripts/get-kubeconfig.sh kube-lab-test us-east-1"
+    error_message = "kubeconfig_command stays the bare command: Terraform would escape the quotes of an eval form."
+  }
+
+  assert {
+    condition     = output.next_steps == "./scripts/wait-for-cluster.sh kube-lab-test us-east-1\neval \"$(./scripts/get-kubeconfig.sh kube-lab-test us-east-1)\"\nkubectl get nodes\n"
+    error_message = "next_steps must list the wait, the eval form of get-kubeconfig.sh and kubectl get nodes."
+  }
+
+  assert {
+    condition     = toset(keys(module.cluster.status_parameters)) == toset(["cluster", "cp-1", "worker-1", "worker-2"])
+    error_message = "Terraform reads one status parameter per node, plus the cluster's, and nothing else."
+  }
+}

@@ -23,6 +23,15 @@ output "nat_public_ips" {
   value       = module.network.nat_public_ips
 }
 
+output "next_steps" {
+  description = "Commands to run after apply, ready to paste: wait for the cluster, then point kubectl at it."
+  value       = <<-EOT
+    ./scripts/wait-for-cluster.sh ${local.cluster_name} ${var.region}
+    eval "$(./scripts/get-kubeconfig.sh ${local.cluster_name} ${var.region})"
+    kubectl get nodes
+  EOT
+}
+
 output "nodes" {
   description = "Nodes keyed by name: role, instance ID, private IP and AZ."
   value       = module.cluster.nodes
