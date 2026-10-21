@@ -319,7 +319,7 @@ run "node_roles_can_do_their_job" {
       s.effect != "Deny" && contains(s.actions, "ssm:PutParameter") &&
       contains(s.resources, "arn:aws:ssm:us-east-1:123456789012:parameter/kube-lab-test/nodes/worker-*")
     ])
-    error_message = "Workers must be able to publish their own status."
+    error_message = "Workers must be able to write the worker status parameters."
   }
 
   assert {

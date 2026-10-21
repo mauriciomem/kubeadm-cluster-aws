@@ -1,6 +1,6 @@
 # Filled in twice (see "Two templating passes" in docs/architecture.md):
-# - Terraform's templatefile fills the single-dollar placeholders at plan time: names,
-#   versions, CIDRs.
+# - Terraform's templatefile fills the single-dollar placeholders at plan time: the node
+#   name and the API endpoint.
 # - Double-dollar placeholders reach the node with a single dollar, and envsubst fills them
 #   at boot (render_kubeadm_config in lib.sh): PRIVATE_IP, JOIN_TOKEN, CA_CERT_HASH and
 #   CERT_KEY. That keeps join secrets out of Terraform.

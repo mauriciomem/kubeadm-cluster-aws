@@ -56,8 +56,11 @@ data "aws_iam_policy_document" "worker" {
     ]
   }
 
+  # Every worker shares one role, so a worker can write any worker's status, not only its
+  # own. Per-node scoping would need a role per node. A spoofed status is cosmetic: joins
+  # only read control-plane statuses, and allowed_pattern limits what can be written.
   statement {
-    sid       = "WriteOwnStatus"
+    sid       = "WriteWorkerStatus"
     actions   = ["ssm:PutParameter"]
     resources = ["${local.ssm_prefix_arn}/nodes/worker-*"]
   }
