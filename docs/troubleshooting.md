@@ -6,11 +6,8 @@ about it.
 
 ## First steps
 
-1. Print the statuses. `wait-for-cluster.sh` exits with 0 when the cluster is ready, 1 when a
-   node reports a failure, 2 when it gives up after 40 minutes and 3 when the AWS CLI can't
-   read the cluster's status at all. `--once` prints the statuses once (exit 4 while still in
-   progress), and `--history` shows when each status changed and how long each step took. In that last case it prints the AWS error, such as expired
-   credentials or a parameter that doesn't exist in that region. `--help` shows the usage:
+1. Print the statuses with `wait-for-cluster.sh`, or once with `--once` (see
+   [Check the progress](#check-the-progress) below):
 
    ```bash
    ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
@@ -59,11 +56,76 @@ Four things to know:
   `{"command": ["sudo bash -c 'journalctl -u kubelet | tail -n 100'"]}` in `params.json`, and
   pass `--parameters file://params.json`.
 
+## Check the progress
+
+Each node writes its progress to an SSM parameter, and you can read it in three ways.
+
+### In Terraform
+
+On the first plan, the `cluster_status` output shows `(known after apply)`, because the
+parameters don't exist yet. From then on, every plan and apply ends with a warning until the
+cluster is ready. While the nodes work, it reads:
+
+```text
+Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. The nodes usually finish about 5 minutes after the first apply. ...
+```
+
+When a node fails, it names the node and the step:
+
+```text
+Bootstrap failed: worker-2 at step join. Open a shell on that node (terraform output ssm_session_commands) and read /var/log/kube-lab-bootstrap.log as root; ...
+```
+
+The warning never blocks a plan, an apply or a destroy. `terraform output cluster_status` shows
+the same values as a map, but only as of the last `terraform apply` or
+`terraform apply -refresh-only`: `terraform output` doesn't read them again.
+
+### Once, from the script
+
+`terraform output status_command` prints a command that reads the live values once:
+
+```bash
+./scripts/wait-for-cluster.sh --once kube-lab-a1b2 us-east-1
+```
+
+It exits with 0 when the cluster is ready, 1 when a node reports a failure, 4 while the
+bootstrap is still running, 3 when the AWS CLI can't read the status, and 64 when the arguments
+are wrong. That makes it easy to use in your own scripts.
+
+### Until it finishes
+
+Without `--once`, the script prints a line whenever a status changes, and repeats the line every
+2 minutes so a long step doesn't look hung. It exits with 0 when the cluster is ready, 1 when a
+node fails, 2 when it gives up after 40 minutes, and 3 when the AWS CLI can't read the status.
+In that last case it prints the AWS CLI's error, such as expired credentials or a cluster that
+doesn't exist in that region. `--help` shows the usage.
+
+### Afterward, with timings
+
+`--history` shows when each status changed. The columns are the time, the time since Terraform
+created the parameters, the value, and how long the value stayed (output abridged):
+
+```text
+cluster
+  12:00:00  +0m00s    pending           3m50s
+  12:03:50  +3m50s    installing        2m00s
+  12:05:50  +5m50s    ready             (current)
+worker-1
+  12:00:00  +0m00s    pending           1m10s
+  12:01:10  +1m10s    bootstrapping     2m10s
+  12:03:20  +3m20s    waiting           0m50s
+  12:04:10  +4m10s    joining           0m55s
+  12:05:05  +5m05s    joined            (current)
+```
+
+It needs the `ssm:GetParameterHistory` permission. SSM keeps the last 100 versions of each
+parameter, which is far more than one bootstrap writes.
+
 ## Status values
 
 | Value | Meaning | Typical time in this state |
 |---|---|---|
-| `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS error on the next line. The nodes may be fine. | Until you fix your credentials |
+| `unknown` | Shown by `wait-for-cluster.sh` when one of its AWS CLI calls fails partway through the wait, for example because your credentials expired. It prints the AWS CLI's error below the status line. The nodes may be fine. | Until you fix your credentials |
 | `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute |
 | `bootstrapping` | Preparing the host and installing packages. | 1 to 3 minutes |
 | `initializing` | cp-1 runs `kubeadm init`. | About 1 minute |
@@ -118,6 +180,20 @@ If cp-1 fails at `init` and a reset doesn't help, the quickest fix is a new clus
 `terraform destroy`, then `terraform apply`.
 
 ## Common problems
+
+### kubectl doesn't use the new cluster
+
+You ran `get-kubeconfig.sh` without `eval`, or in another terminal. A script runs in its own
+process and can't set `KUBECONFIG` in your shell, so kubectl still uses your previous
+kubeconfig, or none. Run the script through `eval`:
+
+```bash
+eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
+echo "$KUBECONFIG"    # should end in /.kube/<cluster>.yaml
+```
+
+[Get the kubeconfig again](operations.md#get-the-kubeconfig-again) explains the script's other
+messages.
 
 ### kubectl times out from your machine
 

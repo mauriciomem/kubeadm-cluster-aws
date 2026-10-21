@@ -16,24 +16,49 @@ terraform output -raw region
 eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
 ```
 
-This downloads the admin kubeconfig from SSM to `~/.kube/<cluster>.yaml` and sets
-`KUBECONFIG` for the current shell. Run it in every new terminal, or point `KUBECONFIG` at the
-file yourself. Without `eval`, the script can't set `KUBECONFIG`, so it prints the commands to
-copy instead.
+The script downloads the admin kubeconfig from SSM to `~/.kube/<cluster>.yaml`, readable only
+by you, and prints `export KUBECONFIG=...`. `eval` runs that line in your current shell. Run it
+in every new terminal, or point `KUBECONFIG` at the file yourself.
+
+What happens depends on how you start it:
+
+- Through `eval "$(...)"`, or with its output going to a pipe or a file, it prints only the
+  `export` line.
+- Run directly in a terminal, it can't set `KUBECONFIG`: a script runs in its own process and
+  can't change your shell's environment. So it says so and prints the commands to copy, either
+  `export KUBECONFIG=...` or `kubectl --kubeconfig ...` for a single command.
+- Sourced with `source` or `.`, it refuses and prints the `eval` form, so its settings don't
+  leak into your shell.
+
+It exits with 0 when it wrote the file, 1 when the cluster hasn't published the kubeconfig yet
+(wait for the cluster first), 2 when you sourced it, and 64 when the arguments are wrong. When
+the AWS CLI fails, the script exits with the AWS CLI's own exit code. `terraform output
+kubeconfig_command` prints the script with your cluster's name and region, and
+`terraform output next_steps` prints the full `eval` line.
 
 ## Status parameters on a cluster created before they became Strings
 
-Status parameters are plain `String` parameters (they used to be `SecureString`). On a cluster
-created before that change, the next `terraform apply` converts them and resets them to
-`pending`, and the `cluster_ready` check then warns that the cluster isn't ready. The cluster
-itself is unaffected. To show the real values again, write them back:
+Status parameters are plain `String` parameters; they used to be `SecureString`. On a cluster
+created before that change, the first `terraform apply` with the current code converts them
+and resets them to `pending`. The cluster_ready check then warns that the cluster isn't ready.
+The cluster itself is unaffected: only the status values change.
+
+If the cluster was ready before, write the final values back. This needs
+`ssm:PutParameter` on the parameters:
 
 ```bash
-c=$(terraform output -raw cluster_name) r=$(terraform output -raw region)
+c=$(terraform output -raw cluster_name)
+r=$(terraform output -raw region)
 aws ssm put-parameter --region "$r" --overwrite --name "/$c/status/cluster" --value ready
-for n in $(terraform output -json nodes | jq -r 'keys[]'); do aws ssm put-parameter --region "$r" --overwrite --name "/$c/nodes/$n/status" --value joined; done
+for name in $(aws ssm get-parameters-by-path --region "$r" --path "/$c/nodes" --recursive \
+    --query 'Parameters[].Name' --output text); do
+  aws ssm put-parameter --region "$r" --overwrite --name "$name" --value joined
+done
 terraform apply -refresh-only
 ```
+
+`ready` and `joined` are the values a finished bootstrap leaves. The last command reads them
+into the `cluster_status` output and clears the warning.
 
 ## Open a shell on a node
 
