@@ -107,6 +107,7 @@ get_kubeconfig="$(printf '%q' "$(dirname "$0")")/get-kubeconfig.sh $cluster $reg
 deadline=$((SECONDS + timeout))
 last_line=""
 last_print=0
+api_announced=false
 while ((SECONDS < deadline)); do
   # A failed read (expired credentials, throttling) keeps the last line; the AWS CLI's
   # error message is on stderr.
@@ -116,6 +117,14 @@ while ((SECONDS < deadline)); do
     printf '%s %s\n' "$(date +%T)" "$line"
     last_line=$line
     last_print=$SECONDS
+  fi
+  # cp-1 publishes the admin kubeconfig before it reports installing, so kubectl works from
+  # here on. The nodes stay NotReady until the network plugin runs.
+  if [[ $line == cluster=installing* && $api_announced == false ]]; then
+    echo "The API is up. Fetch the kubeconfig now; the nodes turn Ready as the network plugin starts:"
+    echo "  eval \"\$($get_kubeconfig)\""
+    echo "Still waiting for the cluster to report ready..."
+    api_announced=true
   fi
   if [[ $line == cluster=ready* ]]; then
     echo "Cluster is ready. Point kubectl at it with:"
@@ -127,7 +136,7 @@ while ((SECONDS < deadline)); do
     next_steps "that failed"
     exit 1
   fi
-  sleep 15
+  sleep 10
 done
 
 echo "Timed out after $((timeout / 60)) min." >&2

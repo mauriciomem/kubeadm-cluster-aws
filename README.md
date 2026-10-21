@@ -55,26 +55,34 @@ This script shows the nodes' progress and returns when the cluster is ready or a
 Waiting for kube-lab-a1b2 in us-east-1 (up to 40 min)...
 12:02:04 cluster=pending cp-1=pending worker-1=pending worker-2=pending
 12:03:10 cluster=pending cp-1=initializing worker-1=waiting worker-2=waiting
+12:03:40 cluster=installing cp-1=initialized worker-1=waiting worker-2=waiting
+The API is up. Fetch the kubeconfig now; the nodes turn Ready as the network plugin starts:
+  eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
+Still waiting for the cluster to report ready...
 12:04:20 cluster=installing cp-1=initialized worker-1=joining worker-2=joined
 12:05:50 cluster=ready cp-1=joined worker-1=joined worker-2=joined
 Cluster is ready. Point kubectl at it with:
   eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
 ```
 
-Now fetch the admin kubeconfig:
+You don't have to wait for `ready`. As soon as the script prints "The API is up", fetch the
+admin kubeconfig in another terminal and watch the nodes join:
 
 ```bash
 eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
-kubectl get nodes
+kubectl get nodes -w
 ```
+
+The nodes show `NotReady` until the network plugin runs on them, then turn `Ready` one by one.
 
 Keep the `eval "$(...)"` around the script. The script saves the kubeconfig to
 `~/.kube/<cluster>.yaml` and prints an `export KUBECONFIG=...` line, and `eval` runs that line
 in your shell. A script can't change your shell's environment by itself, so if you run it
-without `eval`, `KUBECONFIG` stays unset and the script prints the commands to copy instead.
+without `eval`, `KUBECONFIG` stays unset and the script reminds you to run the line yourself.
 Run the `eval` line again in every new terminal.
 
-To make `terraform apply` itself wait for the cluster, set `wait_for_cluster = true`.
+To make `terraform apply` itself wait for the cluster, set `wait_for_cluster = true`. The apply
+output then shows the same lines, "The API is up" included.
 
 ## Use the cluster
 

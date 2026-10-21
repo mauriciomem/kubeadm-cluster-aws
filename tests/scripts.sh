@@ -45,7 +45,8 @@ lacks() { ! grep -qF -- "$2" "$1"; }
 # Parameters are files under $FAKE_AWS_DIR/params/<name>, version history lines
 # ("<LastModifiedDate>\t<Value>") under $FAKE_AWS_DIR/history/<name>. Touch
 # $FAKE_AWS_DIR/fail to make every call fail like expired credentials. Every call is logged
-# to $FAKE_AWS_DIR/calls.
+# to $FAKE_AWS_DIR/calls. A fake sleep returns at once and runs $FAKE_AWS_DIR/on_sleep, if
+# it exists, so a test can move the cluster along between two polls.
 mkdir -p "$work/bin"
 cat >"$work/bin/aws" <<'EOF'
 #!/usr/bin/env bash
@@ -100,7 +101,11 @@ case $cmd in
     ;;
 esac
 EOF
-chmod +x "$work/bin/aws"
+cat >"$work/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+if [[ -f $FAKE_AWS_DIR/on_sleep ]]; then bash "$FAKE_AWS_DIR/on_sleep"; fi
+EOF
+chmod +x "$work/bin/aws" "$work/bin/sleep"
 export PATH="$work/bin:$PATH"
 export FAKE_AWS_DIR="$work/aws"
 
@@ -205,6 +210,29 @@ check "wait: ready prints the eval form" contains "$work/out" "eval \"\$($(print
 cluster_with failed:cni failed:cni joined
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
 check "wait: failure exits 1" test $? -eq 1
+
+# The API is announced once, as soon as cp-1 reports installing, and the wait goes on.
+cluster_with installing initialized waiting
+cat >"$FAKE_AWS_DIR/on_sleep" <<'EOF'
+p=$FAKE_AWS_DIR/params/kube-lab-t1
+echo x >>"$FAKE_AWS_DIR/sleeps"
+case $(wc -l <"$FAKE_AWS_DIR/sleeps" | tr -d ' ') in
+  1) printf joined >"$p/nodes/worker-1/status" ;;
+  2) printf ready >"$p/status/cluster" ;;
+esac
+EOF
+"$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait: installing, then ready, exits 0" test "$rc" -eq 0
+check "wait: announces the API once" test "$(grep -c 'The API is up' "$work/out")" -eq 1
+check "wait: the announcement shows the eval form" test "$(grep -c 'get-kubeconfig.sh kube-lab-t1 us-east-1' "$work/out")" -eq 2
+api_line=$(grep -n 'The API is up' "$work/out" | cut -d: -f1)
+ready_line=$(grep -n 'cluster=ready' "$work/out" | cut -d: -f1)
+check "wait: announces the API before ready" test "${api_line:-0}" -gt 0 -a "${api_line:-0}" -lt "${ready_line:-0}"
+
+cluster_with ready joined joined
+"$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
+check "wait: no API announcement when the cluster is already ready" lacks "$work/out" "The API is up"
 
 for args in "--once kube-lab-t1 us-east-1 60" "kube-lab-t1" "kube-lab-t1 us-east-1 soon" "--history kube-lab-t1"; do
   eval "set -- $args"
