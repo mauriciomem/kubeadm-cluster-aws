@@ -262,6 +262,21 @@ run_step broken false
 echo "after the failed step" >>"$STATE_DIR/count"
 EOF
 
+# wait_for polls at a fixed 10 s; retry backs off from 5 s. sleep is faked to record the delays.
+cat >"$node/wait.sh" <<'EOF'
+set -Eeuo pipefail
+source "$1"
+sleep() { printf '%s ' "$1" >>"$STATE_DIR/sleeps"; }
+third_time() { echo x >>"$STATE_DIR/tries"; [[ $(wc -l <"$STATE_DIR/tries") -ge 3 ]]; }
+wait_for 60 "the third try" third_time
+printf "| " >>"$STATE_DIR/sleeps"
+rm -f "$STATE_DIR/tries"
+retry 5 third_time
+EOF
+rm -f "$node/state/sleeps" "$node/state/tries"
+"$test_bash" "$node/wait.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
+check "lib.sh: wait_for polls every 10 s, retry backs off" test "$(cat "$node/state/sleeps" 2>/dev/null)" = "10 10 | 5 10 "
+
 if "$node_bash" -c '((BASH_VERSINFO[0] >= 4))' 2>/dev/null; then
   reset_aws
   "$node_bash" "$node/test.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"

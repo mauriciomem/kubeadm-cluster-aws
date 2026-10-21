@@ -109,12 +109,6 @@ run_always() {
 
 # --- Retry and wait ------------------------------------------------------------------
 
-# Doubles a delay, up to 60 seconds.
-next_delay() {
-  local doubled=$(($1 * 2))
-  echo $((doubled > 60 ? 60 : doubled))
-}
-
 # retry <attempts> <command...>: backs off from 5s to 60s. Logs only the command name and
 # its first argument, because later arguments can be secrets.
 retry() {
@@ -128,13 +122,15 @@ retry() {
     log "attempt $n failed, retrying in ${delay}s: $1 ${2:-}"
     sleep "$delay"
     n=$((n + 1))
-    delay=$(next_delay "$delay")
+    delay=$((delay * 2 > 60 ? 60 : delay * 2))
   done
 }
 
-# wait_for <timeout-seconds> <description> <command...>
+# wait_for <timeout-seconds> <description> <command...>: polls every 10 seconds, so a
+# node starts within seconds of what it waits for (the join token, the previous control
+# plane, the load balancer).
 wait_for() {
-  local timeout=$1 what=$2 delay=5 deadline
+  local timeout=$1 what=$2 deadline
   shift 2
   deadline=$((SECONDS + timeout))
   log "waiting for $what"
@@ -143,8 +139,7 @@ wait_for() {
       log "timed out waiting for $what"
       return 1
     fi
-    sleep "$delay"
-    delay=$(next_delay "$delay")
+    sleep 10
   done
 }
 
