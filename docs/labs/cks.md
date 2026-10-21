@@ -105,3 +105,25 @@ The kubelet-csr-approver image is pinned by digest; find it with
 way, then write a ValidatingAdmissionPolicy that rejects images without a digest. The node
 security group also allows all outbound traffic. Think about which destinations the cluster
 actually needs. Guide: [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/).
+
+## Review the lab's own shortcuts
+
+kube-lab takes a few shortcuts to stay simple, listed in
+[Security trade-offs](../architecture.md#security-trade-offs). Treat each one as a question a
+security reviewer could ask:
+
+- All workers share one IAM role. In a shell on worker-1, overwrite worker-2's status:
+
+  ```bash
+  aws ssm put-parameter --overwrite --region <region> \
+    --name /<cluster>/nodes/worker-2/status --value failed:spoofed
+  ```
+
+  Run `wait-for-cluster.sh --once` on your machine: the line now shows
+  `worker-2=failed:spoofed`, although the node is fine. Set the value back to `joined`. What else could an attacker on a worker do with that role, and what
+  would one role per node cost?
+- cp-1 passes the join token to the AWS CLI on its command line. Who on that node could read
+  it from the process list, and what can someone do with a join token in its 24 hours?
+- A `hostNetwork` pod gets the node's IAM credentials (see
+  [above](#keep-pods-away-from-instance-credentials)). On a worker, which SSM parameters would
+  those credentials read?

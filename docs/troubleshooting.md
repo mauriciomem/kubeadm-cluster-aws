@@ -56,7 +56,7 @@ Three things to know:
 
 ## Check the progress
 
-Each node writes its progress to an SSM parameter, and you can read it in three ways.
+Each node writes its progress to an SSM parameter. You can read it in three ways.
 
 ### In Terraform
 
@@ -81,8 +81,8 @@ the same values as a map, but only as of the last `terraform apply` or
 When the plan also changes the cluster, for example when you add a worker, Terraform reads
 the statuses only after the apply. The plan then shows them as `(known after apply)`, and
 the warning appears at the end of the apply instead. While the nodes work, a plan that changes
-nothing else can list `cluster_status` under "Changes to Outputs". That's the progress, not
-drift.
+nothing else can list `cluster_status` under "Changes to Outputs". That's the bootstrap moving
+on, not a change you made.
 
 Reading the statuses needs `ssm:GetParameter` on `/<cluster>/status/cluster` and
 `/<cluster>/nodes/*/status`. Without it, the plan fails with `AccessDenied`.
@@ -101,15 +101,17 @@ are wrong. That makes it easy to use in your own scripts.
 
 ### Until it finishes
 
-Without `--once`, the script prints a line whenever a status changes, and repeats the line every
-2 minutes so a long step doesn't look hung. When the cluster reports `installing`, it says once
-that the API is up and prints the `get-kubeconfig.sh` line: kubectl works from then on, while
-the nodes stay `NotReady` until the network plugin runs. It exits with 0 when the cluster is ready, 1 when a
-node fails, 2 when it gives up after 40 minutes, and 3 when the AWS CLI can't read the status.
-In that last case the AWS CLI's error is above the message, such as expired credentials or a
-cluster that doesn't exist in that region. If a later call fails during the wait, for example
-when your credentials expire, the AWS CLI's error appears and the script keeps the last status
-line. `--help` shows the usage.
+Without `--once`, the script prints a line whenever a status changes, and repeats it every 2
+minutes so a long step doesn't look hung. When the cluster reaches `installing`, it prints the
+`get-kubeconfig.sh` line once: kubectl works from then on, and the nodes turn `Ready` as the
+network plugin starts on them.
+
+It exits with 0 when the cluster is ready, 1 when a node fails, 2 after 40 minutes without
+either, and 3 when the AWS CLI can't read the status at the start. In that last case the AWS
+CLI's own error, such as expired credentials or a cluster that doesn't exist in that region, is
+printed above the script's message. If a read fails later, for example when your credentials
+expire during the wait, the script shows the AWS CLI's error and keeps polling. `--help` shows
+the usage.
 
 ### Afterward, with timings
 
@@ -129,12 +131,12 @@ nodes/worker-1/status
   2026-10-21T12:05:05.222000+00:00	joined
 ```
 
-The AWS CLI prints the times in your local time zone.
-
 It needs the `ssm:GetParameterHistory` permission. SSM keeps the last 100 versions of each
-parameter, which is far more than one bootstrap writes.
+parameter, far more than one bootstrap writes.
 
 ## Status values
+
+Each node reports one of these values:
 
 | Value | Meaning | Typical time in this state |
 |---|---|---|
@@ -147,9 +149,16 @@ parameter, which is far more than one bootstrap writes.
 | `joined` | Done. | |
 | `failed:<step>` | The step failed. See below. | |
 
-The cluster value goes from `pending` to `installing` when cp-1 has published the kubeconfig
-and starts on the add-ons, and to `ready` when every node is `Ready`. [Architecture](architecture.md#bootstrap-contract) has the
-full sequence.
+The cluster status has its own values, which only cp-1 writes:
+
+| Value | Meaning |
+|---|---|
+| `pending` | cp-1 hasn't published the admin kubeconfig yet. |
+| `installing` | The kubeconfig is published and kubectl works. cp-1 installs the add-ons and waits until every node is `Ready`. |
+| `ready` | Every node is `Ready` and cp-1 has finished. |
+| `failed:<step>` | cp-1 failed at that step. |
+
+[Architecture](architecture.md#bootstrap-contract) shows the full sequence.
 
 ## Failed steps
 

@@ -36,14 +36,15 @@ connection to a node.
 kubectl talks to an internet-facing Network Load Balancer (NLB) on port 6443. Its security
 group only admits `operator_cidrs`.
 
-The NLB is also kubeadm's `controlPlaneEndpoint`, so the nodes use it too. Its DNS name
+The NLB is also kubeadm's `controlPlaneEndpoint`, the API address every node uses. Its DNS name
 resolves to public addresses even inside the VPC, so node traffic leaves through the NAT
 gateway and comes back in. That's why the NLB security group also admits the NAT gateway's IP.
 The target group has client IP preservation turned off. With it on, a control plane that the
 NLB routes back to itself can't complete the connection.
 
-The nodes install packages, download Calico or Cilium and pull images through the NAT gateway.
-When that path breaks, bootstrap fails at the `packages` or `cni` step.
+The nodes download the AWS CLI, install packages, download Calico or Cilium and pull images
+through the NAT gateway. When that path breaks, a node stays `pending` or fails at the
+`packages` or `cni` step.
 
 Session Manager needs no inbound port. The SSM Agent on each node opens an outbound connection
 to AWS through the NAT gateway, your AWS CLI opens another from your machine, and AWS joins the
@@ -68,43 +69,39 @@ To follow a value from your settings to a node, take `calico_version`: `variable
 `CALICO_VERSION=` to `/etc/kube-lab/cluster.env`. On the node, `lib.sh` sources that file and
 `control-plane.sh` uses the variable.
 
-## Why Terraform state holds no secrets
+## Security trade-offs
 
-Terraform creates every SSM parameter with the placeholder value `pending`, using a
-write-only argument (`value_wo`), which Terraform never stores or reads back. The nodes then
-overwrite the parameters with the real join token, certificate key and admin kubeconfig.
-Terraform has no Kubernetes or Helm provider: cp-1 installs the add-ons itself. So Terraform
-never sees a cluster credential, and destroying the cluster still deletes every parameter.
+kube-lab keeps the cluster's secrets out of Terraform state. Beyond that, it favors a setup you
+can read in one sitting over a hardened one. These are the choices it makes:
 
-The status parameters are different: they are plain `String` parameters, and Terraform reads
-them (`modules/status`) to show progress. Their `allowed_pattern` makes SSM refuse anything
-that isn't a status value, so a bug in a node script can't put a secret into one. Terraform
-reads each status parameter by name, never the whole `/<cluster>/` path, which also holds the
-secrets.
+- Terraform state holds no secrets. Terraform creates every SSM parameter with the placeholder
+  `pending` through a write-only argument (`value_wo`), which it never stores or reads back.
+  The nodes then write the real join token, certificate key and admin kubeconfig. Terraform
+  has no Kubernetes or Helm provider; cp-1 installs the add-ons itself.
+- The status parameters are plain Strings, so Terraform can read them (`modules/status`) to show
+  progress. Their `allowed_pattern` makes SSM refuse anything that isn't a status value, so a
+  script bug can't leak a secret into one. Terraform reads each status by name, never the whole
+  `/<cluster>/` path.
+- Control planes and workers get separate IAM roles. Control planes can read and write every
+  parameter under `/<cluster>/`. Workers can read only the join token and the CA certificate
+  hash, never the admin kubeconfig or the certificate key. They can write any parameter under
+  `/<cluster>/nodes/worker-*`.
+- All workers share one role, so a worker can overwrite another worker's status. No node waits
+  on a worker's status, so a false value only misleads you. A node can also create extra
+  parameters under the paths it may write, and `terraform destroy` won't remove those.
+- On cp-1, the join token and certificate key appear on the AWS CLI's command line for the
+  moment it takes to publish them, so `ps` can show them. The admin kubeconfig goes through a
+  file instead.
+- The nodes reach Session Manager through a minimal inline policy instead of the managed
+  `AmazonSSMManagedInstanceCore`, which would let any node read every parameter in your
+  account. The policy leaves out Run Command, AWS's remote command feature, so a Session
+  Manager shell is the only way in.
+- Instances require IMDSv2 with a hop limit of 1, so pods on the pod network can't get the
+  node's IAM credentials. Pods with `hostNetwork: true` still can; see
+  [Keep pods away from instance credentials](labs/cks.md#keep-pods-away-from-instance-credentials).
+- The nodes may reach each other on every port and the internet on every port.
 
-## Node permissions
-
-Control planes and workers get separate IAM roles. Control planes can read and write every
-parameter under `/<cluster>/`: they publish the join material, the admin kubeconfig and the
-statuses. Workers can read only the join token and the CA certificate hash, never the admin
-kubeconfig or the certificate key, and write any parameter under `/<cluster>/nodes/worker-*`.
-All workers share one role, so a worker can overwrite another worker's status, and a node can
-create extra parameters under the paths it may write, which `terraform destroy` doesn't
-remove. No node waits on a worker's status, so a spoofed one only changes what you see.
-Working out what else an attacker on a worker could do with that role is a good CKS exercise.
-
-Both roles get Session Manager access through an inline policy instead of the managed
-`AmazonSSMManagedInstanceCore` policy, because that one also allows `ssm:GetParameter` on every
-parameter in the account. The inline policy has `ssm:UpdateInstanceInformation` and the four
-`ssmmessages` channel actions, which is the
-[minimal Session Manager policy](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-create-iam-instance-profile.html)
-AWS documents. It has no `ec2messages` actions, so the agent can't receive Run Command
-documents: Session Manager is the only way in, and every session shows up in the Session
-Manager history.
-
-Instances require IMDSv2 with a hop limit of 1, so pods on the pod network can't get
-instance-role credentials. Pods with `hostNetwork: true` still can; the
-[CKS lab](labs/cks.md#keep-pods-away-from-instance-credentials) shows how to deal with that.
+The [CKS lab](labs/cks.md#review-the-labs-own-shortcuts) turns these into exercises.
 
 ## AWS permissions
 
@@ -118,7 +115,7 @@ To run `terraform apply` and `terraform destroy`, the role must be able to:
 | EC2 and VPC | Create, tag and delete the VPC, subnets, route tables, internet gateway, NAT gateway, Elastic IP, security groups and rules, and instances, and tag their root volumes. Read with `ec2:Describe*`, which covers `DescribeAvailabilityZones`, `DescribeInstanceTypeOfferings` and `DescribeInstanceTypes` |
 | Elastic Load Balancing | Create, tag and delete a Network Load Balancer, a target group and a listener, and register targets |
 | IAM | Create and delete roles, inline role policies and instance profiles named after the cluster, and `iam:PassRole` for those roles |
-| SSM Parameter Store | Create, tag and delete parameters under `/<cluster>/`, and read the public Ubuntu AMI ID under `/aws/service/canonical/` |
+| SSM Parameter Store | Create, tag, read and delete parameters under `/<cluster>/`, and read the public Ubuntu AMI ID under `/aws/service/canonical/` |
 | STS | `sts:GetCallerIdentity` |
 
 For the helper scripts and node shells:
@@ -130,7 +127,7 @@ For the helper scripts and node shells:
 | `ssm:GetParameterHistory` | `wait-for-cluster.sh --history` |
 | `ssm:StartSession`, `ssm:TerminateSession`, `ssm:ResumeSession` | `aws ssm start-session` |
 
-The parameters are encrypted with the AWS managed key `aws/ssm`. Its key policy lets every
+The SecureString parameters are encrypted with the AWS managed key `aws/ssm`. Its key policy lets every
 principal in your account decrypt through SSM, so you don't need a separate KMS permission.
 
 ## Bootstrap contract
@@ -155,7 +152,7 @@ sequenceDiagram
   participant nlb as API load balancer
   cp1->>cp1: kubeadm init
   cp1->>ssm: join/ca-cert-hash, join/certificate-key, join/token, kubeconfig/admin
-  cp1->>ssm: nodes/cp-1/status = initialized
+  cp1->>ssm: nodes/cp-1/status = initialized, status/cluster = installing
   par control planes, one at a time
     cpn->>ssm: wait for join/token and the previous control plane
     cpn->>nlb: wait until the API answers
@@ -167,13 +164,13 @@ sequenceDiagram
   end
   cp1->>cp1: install CNI, kubelet-csr-approver
   cp1->>cp1: wait until every node is Ready
-  cp1->>ssm: status/cluster = ready
+  cp1->>ssm: nodes/cp-1/status = joined, status/cluster = ready
 ```
 
 cp-1 installs two add-ons and nothing else. The network plugin gives pods their addresses.
 kubelet-csr-approver approves the certificate each kubelet requests for its own HTTPS port.
-The kubeadm config sets `serverTLSBootstrap: true`, so kubelets ask the cluster's certificate authority
-for that certificate instead of signing their own. Until it is approved, commands that go
+The kubeadm config sets `serverTLSBootstrap: true`, so kubelets ask the cluster's certificate
+authority for that certificate instead of signing their own. Until it is approved, commands that go
 through the kubelet, such as `kubectl logs` and `kubectl exec`, fail, and so would
 metrics-server if you install it. Everything else is up to you: [Add-ons](addons.md) shows how.
 
@@ -188,33 +185,27 @@ restart a stopped cluster, still find a valid token.
 
 ### Status values
 
-Each node writes its progress to `/<cluster>/nodes/<node>/status`. cp-1 also writes the
-cluster's progress to `/<cluster>/status/cluster`.
+Each node writes its progress to `/<cluster>/nodes/<node>/status`, and cp-1 also writes the
+cluster's progress to `/<cluster>/status/cluster`:
 
-| Node status | Meaning |
-|---|---|
-| `pending` | Terraform's placeholder. The node hasn't installed the AWS CLI yet, which usually takes under a minute. |
-| `bootstrapping` | The AWS CLI works. The node is preparing the host and installing packages. |
-| `initializing` | cp-1 only: `kubeadm init` is running. |
-| `initialized` | cp-1 only: the control plane is up and the join material is published. cp-1 now installs the add-ons and waits for every node, which can take up to 30 minutes. |
-| `waiting` | Joining nodes: waiting for the join token, for the previous control plane, and for the API through the load balancer. |
-| `joining` | Joining nodes: `kubeadm join` is running. |
-| `joined` | Done. |
-| `failed:<step>` | The named step failed. [Troubleshooting](troubleshooting.md) lists every step. |
+```text
+cp-1            pending -> bootstrapping -> initializing -> initialized -> joined
+other nodes     pending -> bootstrapping -> waiting -> joining -> joined
+cluster         pending -> installing -> ready
+```
 
-| Cluster status | Meaning |
-|---|---|
-| `pending` | cp-1 hasn't finished `kubeadm init` yet. |
-| `installing` | The admin kubeconfig is published and kubectl works. cp-1 is installing the add-ons and waiting for every node. |
-| `ready` | Every node is `Ready` and cp-1 has finished. |
-| `failed:<step>` | cp-1 failed at the named step. |
+Any of them can end in `failed:<step>` instead. `pending` is Terraform's placeholder: a node
+can't report until it has installed the AWS CLI. The cluster turns `installing` right after
+cp-1 publishes the admin kubeconfig, so kubectl works from then on, and `ready` once every node
+is `Ready`. [Troubleshooting](troubleshooting.md#status-values) explains each value and how long
+it usually lasts.
 
 The steps, in order, are `awscli`, `host`, `packages`, `containerd` and `shell` on every node.
-cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`,
-`refresh-timer` and `wait-nodes`; the other nodes run `join`. Control planes finish with
-`root-kubeconfig`, then `helm` when `helm_enabled` is set, before they report `joined`. Every
-failure reports the step that was running. The one exception is a node that can't install the
-AWS CLI: it can't report anything and stays at `pending`.
+cp-1 then runs `init`, `publish`, `local-kubeconfig`, `cni`, `csr-approver`, `refresh-timer`
+and `wait-nodes`; the other nodes run `join`. Control planes finish with `root-kubeconfig`,
+then `helm` when `helm_enabled` is set, before they report `joined`. A failure reports the step
+that was running, except in `awscli`: without the AWS CLI the node can't report anything and
+stays `pending`.
 
 ### SSM parameters
 

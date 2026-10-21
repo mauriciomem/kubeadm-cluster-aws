@@ -1,6 +1,6 @@
 # Operations
 
-How to reach, resize and repair a running cluster. The commands assume you run them from the
+This page shows how to reach, resize and repair a running cluster. Run the commands from the
 repository root, where `terraform output` works. On a node, run them as root after `sudo -i`.
 
 In the examples, `<cluster>` is your cluster name and `<region>` its AWS region. Print them with:
@@ -16,19 +16,14 @@ terraform output -raw region
 eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)")"
 ```
 
-The script downloads the admin kubeconfig from SSM to `~/.kube/<cluster>.yaml`, readable only
-by you, and prints `export KUBECONFIG=...`. `eval` runs that line in your current shell. Run it
-in every new terminal, or point `KUBECONFIG` at the file yourself.
+The script downloads the admin kubeconfig to `~/.kube/<cluster>.yaml`, readable only by you,
+and prints `export KUBECONFIG=...` for `eval` to run in your shell. Run it in every new
+terminal, or point `KUBECONFIG` at the file yourself. Without `eval`, it still writes the file
+but can't set `KUBECONFIG`, and it reminds you to run the `export` line.
 
-Run directly in a terminal, the script can't set `KUBECONFIG`: a script runs in its own
-process and can't change your shell's environment. It prints the same `export` line and
-reminds you on stderr to run it yourself.
-
-It exits with 0 when it wrote the file, 1 when the cluster hasn't published the kubeconfig yet
-(wait until `wait-for-cluster.sh` says the API is up), and 64 when the arguments are wrong.
-When the AWS CLI fails, the script exits with the AWS CLI's own exit code. `terraform output
-kubeconfig_command` prints the script with your cluster's name and region, and
-`terraform output next_steps` prints the full `eval` line.
+It exits with 0 when it wrote the file, 1 when cp-1 hasn't published the kubeconfig yet (wait
+until `wait-for-cluster.sh` says the API is up), and 64 when the arguments are wrong. When the
+AWS CLI fails, the script exits with the AWS CLI's exit code.
 
 ## Open a shell on a node
 
