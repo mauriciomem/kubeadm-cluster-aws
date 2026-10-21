@@ -295,13 +295,16 @@ imds() {
 }
 
 #######################################
-# curl that refuses plain HTTP and TLS older than 1.2, including on redirects.
+# curl that refuses plain HTTP and TLS older than 1.2, including on redirects. A stalled
+# transfer (under 1 KB/s for a minute) or one that runs past 15 minutes fails, so retry
+# can try again; the largest download, the cilium CLI, is about 75 MB.
 # Arguments: url, then extra curl arguments
 #######################################
 https_get() {
   local url=$1
   shift
-  curl --proto '=https' --tlsv1.2 -fsSL "$@" "$url"
+  curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+    --max-time 900 "$@" "$url"
 }
 
 #######################################

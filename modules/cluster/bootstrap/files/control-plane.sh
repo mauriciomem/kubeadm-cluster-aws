@@ -125,14 +125,16 @@ install_csr_approver() {
 }
 
 # Optional (helm_enabled), run by run_optional_step: errexit is off in here, so every
-# command is chained, and a failure only logs a warning.
+# command is chained, and a failure only logs a warning. Completion is generated once into
+# a static file, so no shell runs helm at startup.
 install_helm() {
   local dir rc=0
   dir=$(mktemp -d) || return 1
   fetch_verified "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" "$HELM_SHA256" "$dir/helm.tar.gz" &&
     tar -xzf "$dir/helm.tar.gz" -C "$dir" linux-amd64/helm &&
     install -m 0755 "$dir/linux-amd64/helm" /usr/local/bin/helm &&
-    printf '%s\n' 'source <(helm completion bash)' >>/etc/bash.bashrc || rc=$?
+    /usr/local/bin/helm completion bash >"$dir/helm.bash" &&
+    install -D -m 0644 "$dir/helm.bash" /etc/bash_completion.d/helm || rc=$?
   rm -rf "$dir"
   return "$rc"
 }
@@ -188,14 +190,15 @@ main() {
     run_step join join_cluster
   fi
   run_always root-kubeconfig setup_root_kubeconfig
-  # Root has a kubeconfig on every control plane, so that's where Helm goes.
+  status joined
+  # After every node status is final, so they are once wait-for-cluster.sh sees ready.
+  # A no-op except on cp-1.
+  cluster_status ready
+  # Root has a kubeconfig on every control plane, so that's where Helm goes. After ready,
+  # so optional tooling never delays the cluster; it writes no status.
   if [[ $HELM_ENABLED == true ]]; then
     run_optional_step helm install_helm
   fi
-  status joined
-  # Last, so every node status is final once wait-for-cluster.sh sees ready.
-  # A no-op except on cp-1.
-  cluster_status ready
   finish_bootstrap
 }
 

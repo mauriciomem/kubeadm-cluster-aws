@@ -324,6 +324,32 @@ run "static_guard_helm_is_verified_and_optional" {
     condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "run_optional_step helm install_helm\n")
     error_message = "A failed Helm install must log a warning, not fail the node."
   }
+
+  # errexit is off inside run_optional_step, so install_helm must be one && chain ending in
+  # || rc=$?. A command split off onto its own line would fail silently and carry on.
+  assert {
+    condition     = can(regex("install_helm\\(\\) \\{\\n  local dir rc=0\\n  dir=\\$\\(mktemp -d\\) \\|\\| return 1\\n(  [^\\n]*&&\\n)(    [^\\n]*&&\\n)*    [^\\n]*\\|\\| rc=\\$\\?\\n  rm -rf \"\\$dir\"\\n  return \"\\$rc\"\\n\\}", module.cluster.bootstrap["cp-1"].script))
+    error_message = "install_helm must chain every command with && and end with || rc=$?."
+  }
+
+  # Optional tooling never delays ready: Helm runs once, after the cluster status is ready.
+  assert {
+    condition = (
+      length(split("run_optional_step helm", module.cluster.bootstrap["cp-1"].script)) == 2 &&
+      can(regex("(?s)status joined\\n.*cluster_status ready\\n.*run_optional_step helm install_helm\\n.*finish_bootstrap\\n\\}", module.cluster.bootstrap["cp-1"].script))
+    )
+    error_message = "The Helm step must run after cluster_status ready, so it can't delay the cluster."
+  }
+
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "/etc/bash_completion.d/helm") && !strcontains(module.cluster.bootstrap["cp-1"].script, "bash.bashrc")
+    error_message = "Helm completion must be a static file in /etc/bash_completion.d, not a command every shell runs."
+  }
+
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "--speed-limit 1024 --speed-time 60 \\\n    --max-time 900")
+    error_message = "Downloads must time out when they stall, so an optional step can't hang the bootstrap."
+  }
 }
 
 run "static_guard_apt_waits_for_first_boot_upgrades" {
