@@ -44,15 +44,17 @@ lacks() { ! grep -qF -- "$2" "$1"; }
 # --- Fake AWS CLI ----------------------------------------------------------------------
 # Parameters are files under $FAKE_AWS_DIR/params/<name>, version history lines
 # ("<LastModifiedDate>\t<Value>") under $FAKE_AWS_DIR/history/<name>. Touch
-# $FAKE_AWS_DIR/fail to make every call fail like expired credentials. Every call is logged
-# to $FAKE_AWS_DIR/calls.
+# $FAKE_AWS_DIR/fail to make every call fail like expired credentials, or write N to
+# $FAKE_AWS_DIR/fail_after to fail every call after the first N. Every call is logged to
+# $FAKE_AWS_DIR/calls. A --query with to_string([...]) gets each value JSON-encoded, as the
+# real AWS CLI's JMESPath does.
 mkdir -p "$work/bin"
 cat >"$work/bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -u
 d=$FAKE_AWS_DIR
 printf '%s\n' "$*" >>"$d/calls"
-if [[ -e $d/fail ]]; then
+if [[ -e $d/fail || (-e $d/fail_after && $(wc -l <"$d/calls") -gt $(cat "$d/fail_after")) ]]; then
   echo "An error occurred (ExpiredTokenException) when calling the $2 operation: The security token included in the request is expired" >&2
   exit 254
 fi
@@ -68,27 +70,57 @@ while [[ $# -gt 0 ]]; do
     *) shift ;;
   esac
 done
+# Prints a value as the query asks: ["<value>"] for to_string([...]), else as it is.
+encode() {
+  local v=$1 out="" i ch code
+  if [[ $query != *to_string* ]]; then
+    printf '%s' "$v"
+    return
+  fi
+  for ((i = 0; i < ${#v}; i++)); do
+    ch=${v:i:1}
+    case $ch in
+      '"') out+='\"' ;;
+      '\') out+='\\' ;;
+      $'\n') out+='\n' ;;
+      $'\t') out+='\t' ;;
+      *)
+        code=$(LC_ALL=C printf '%d' "'$ch")
+        if ((code >= 0 && code < 32 || code == 127)); then out+=$(printf '\\u%04x' "$code"); else out+=$ch; fi
+        ;;
+    esac
+  done
+  printf '["%s"]' "$out"
+}
+# Encodes a parameter's value, trailing newlines included.
+encode_param() {
+  local v
+  v=$(cat "$d/params$1" && printf x)
+  encode "${v%x}"
+}
 case $cmd in
   "ssm get-parameter")
     if [[ ! -f $d/params$name ]]; then
       echo "An error occurred (ParameterNotFound) when calling the GetParameter operation:" >&2
       exit 254
     fi
-    cat "$d/params$name"
+    encode_param "$name"
     echo
     ;;
   "ssm get-parameters-by-path")
     [[ -d $d/params$path ]] || exit 0
     names=$(cd "$d/params" && find ".$path" -type f | sed 's#^\.##' | sort)
-    if [[ $query == *Name,Value* ]]; then
-      for n in $names; do printf '%s\t%s\n' "$n" "$(cat "$d/params$n")"; done
+    if [[ $query == *Value* ]]; then
+      for n in $names; do printf '%s\t%s\n' "$n" "$(encode_param "$n")"; done
     else
       printf '%s\n' "$names" | paste -s - | tr -d '\n'
       echo
     fi
     ;;
   "ssm get-parameter-history")
-    cat "$d/history$name"
+    while IFS=$'\t' read -r when v; do
+      printf '%s\t%s\n' "$when" "$(encode "$v")"
+    done <"$d/history$name"
     ;;
   "ssm put-parameter")
     mkdir -p "$(dirname "$d/params$name")"
@@ -233,11 +265,46 @@ cluster_with ready joined joined
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
 rc=$?
 check "wait: ready exits 0" test "$rc" -eq 0
-check "wait: ready prints the eval form" contains "$work/out" "eval \"\$($repo_root/scripts/get-kubeconfig.sh kube-lab-t1 us-east-1)\""
+check "wait: ready prints the eval form" contains "$work/out" "eval \"\$($(printf '%q' "$repo_root/scripts")/get-kubeconfig.sh kube-lab-t1 us-east-1)\""
 
 cluster_with failed:cni failed:cni joined
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
 check "wait: failure exits 1" test $? -eq 1
+
+# Never trust a status on read: root on a worker can write any text into a worker's status.
+esc=$(printf '\033')
+cluster_with installing initialized "$(printf 'failed:join\033]52;c;ZXZpbA==\007')"
+set_param /kube-lab-t1/nodes/cp-2/status abcdef.0123456789abcdef
+set_param /kube-lab-t1/nodes/worker-1/extra failed:spoof
+set_param /kube-lab-t1/nodes/evil/status failed:spoof
+"$test_bash" "$wait_script" --once kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait --once: values outside the protocol show as invalid" test "$(cat "$work/out")" = "cluster=installing cp-1=initialized cp-2=invalid worker-1=invalid"
+check "wait --once: an invalid value is not a failure" test "$rc" -eq 4
+check "wait --once: escape sequences never reach the terminal" lacks "$work/out" "$esc"
+check "wait --once: a token-like value is never printed" lacks "$work/out" "0123456789abcdef"
+check "wait --once: names Terraform doesn't create are ignored" lacks "$work/out" spoof
+
+# A value with a newline can't forge a line for another node, or a ready cluster.
+nl=$'\n'
+cluster_with "ready$nl" initialized "$(printf 'joined\n/kube-lab-t1/nodes/cp-1/status\tready')"
+"$test_bash" "$wait_script" --once kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait --once: a multi-line value forges nothing" test "$(cat "$work/out")" = "cluster=invalid cp-1=initialized worker-1=invalid"
+check "wait --once: an invalid cluster status is not ready" test "$rc" -eq 4
+
+# A read that fails after the first check worked is an AWS CLI error, not "in progress".
+cluster_with installing initialized joining
+echo 2 >"$FAKE_AWS_DIR/fail_after"
+"$test_bash" "$wait_script" --once kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait --once: a read that fails midway exits 3" test "$rc" -eq 3
+check "wait --once: a read that fails midway shows the error" contains "$work/err" "ExpiredTokenException"
+
+# The script and the node scripts accept the same status values.
+check "wait: STATUS_PATTERN matches lib.sh" test \
+  "$(grep '^readonly STATUS_PATTERN=' "$wait_script")" = \
+  "$(grep '^readonly STATUS_PATTERN=' "$repo_root/modules/cluster/bootstrap/files/lib.sh")"
 
 for args in "--once kube-lab-t1 us-east-1 60" "kube-lab-t1" "kube-lab-t1 us-east-1 soon" "../x us-east-1" "--history kube-lab-t1"; do
   eval "set -- $args"
@@ -261,7 +328,8 @@ printf '%s\t%s\n' \
   "2026-10-21T12:05:40+00:00" joined >"$history/nodes/cp-1/status"
 printf '%s\t%s\n' \
   "1792584000" pending \
-  "1792584150.5" joined >"$history/nodes/worker-1/status"
+  "1792584150.5" joined \
+  "1792584160" "$(printf 'x\033]0;owned\007')" >"$history/nodes/worker-1/status"
 "$test_bash" "$wait_script" --history kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
 rc=$?
 check "wait --history: exits 0" test "$rc" -eq 0
@@ -269,7 +337,9 @@ check "wait --history: cluster block first" test "$(sed -n 2p "$work/out")" = "c
 check "wait --history: converts offsets" contains "$work/out" "  14:03:10  +3m10s    installing        2m40s"
 check "wait --history: last value is current" contains "$work/out" "  12:05:50  +5m50s    ready             (current)"
 check "wait --history: per-node durations" contains "$work/out" "  12:01:05  +1m05s    bootstrapping     4m35s"
-check "wait --history: epoch timestamps" contains "$work/out" "  -         +2m30s    joined            (current)"
+check "wait --history: epoch timestamps" contains "$work/out" "  -         +2m30s    joined            0m10s"
+check "wait --history: values outside the protocol show as invalid" contains "$work/out" "  -         +2m40s    invalid           (current)"
+check "wait --history: escape sequences never reach the terminal" lacks "$work/out" "$esc"
 
 # --- lib.sh: status values and optional steps --------------------------------------------
 # lib.sh hard-codes node paths, so the test runs a copy that points them into $work.

@@ -63,24 +63,67 @@ deadline=$((SECONDS + timeout))
 errors=$(mktemp "${TMPDIR:-/tmp}/kube-lab-wait.XXXXXX")
 trap 'rm -f "$errors"' EXIT
 
+# Every value a status parameter accepts: the same regex as STATUS_PATTERN in
+# modules/cluster/bootstrap/files/lib.sh (tests/scripts.sh keeps the two equal).
+readonly STATUS_PATTERN='^(pending|bootstrapping|waiting|joining|joined|initializing|initialized|installing|ready|failed:[a-z0-9-]{1,40})$'
+
+# Never trust a status value on read. IAM limits who writes each parameter, but root on a
+# worker can write any text into a worker's status, including terminal escape sequences
+# or a copy of the join token. So every value is fetched JSON-encoded, through JMESPath's
+# to_string([...]), which keeps a value with newlines or control characters on one line,
+# and anything that isn't a status value is shown as "invalid".
+#
+# Prints the status a JSON-encoded value holds, or "invalid".
+# Arguments: the encoded value, for example ["ready"]
+decode_status() {
+  local value=$1
+  value=${value#'["'}
+  value=${value%'"]'}
+  if [[ "[\"$value\"]" == "$1" && $value =~ $STATUS_PATTERN ]]; then
+    printf '%s\n' "$value"
+  else
+    echo invalid
+  fi
+}
+
 # Status parameters are plain Strings. --with-decryption still matters for clusters created
 # before that change, whose statuses are SecureStrings; for a String it changes nothing.
+# Prints "<node>\t<status>" lines. Only names of the form nodes/<cp|worker>-<n>/status count:
+# anything else under the path didn't come from Terraform.
 node_statuses() {
-  aws ssm get-parameters-by-path --region "$region" --path "/$cluster/nodes" --recursive \
-    --with-decryption --query 'Parameters[].[Name,Value]' --output text |
-    sed "s#^/$cluster/nodes/##; s#/status##" | sort
+  local name value lines name_pattern="^/$cluster/nodes/(cp|worker)-[0-9]+/status$"
+  lines=$(aws ssm get-parameters-by-path --region "$region" --path "/$cluster/nodes" --recursive \
+    --with-decryption --query 'Parameters[].[Name, to_string([Value])]' --output text) || return
+  while IFS=$'\t' read -r name value; do
+    [[ $name =~ $name_pattern ]] || continue
+    name=${name#/"$cluster"/nodes/}
+    printf '%s\t%s\n' "${name%/status}" "$(decode_status "$value")"
+  done <<<"$lines" | sort
 }
 
 cluster_status() {
-  aws ssm get-parameter --region "$region" --name "/$cluster/status/cluster" \
-    --with-decryption --query Parameter.Value --output text
+  local value
+  value=$(aws ssm get-parameter --region "$region" --name "/$cluster/status/cluster" \
+    --with-decryption --query 'to_string([Parameter.Value])' --output text) || return
+  decode_status "$value"
+}
+
+# Drops control characters, for text this script doesn't control, such as AWS CLI errors.
+printable() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177'
 }
 
 # Sets status, nodes and line from one round of AWS CLI calls; errors go to $errors.
+# read_failed is true when a call failed: status is then "unknown", or nodes is empty.
 read_statuses() {
   : >"$errors"
-  status=$(cluster_status 2>>"$errors") || status=unknown
-  nodes=$(node_statuses 2>>"$errors" | awk '{ printf "%s%s=%s", sep, $1, $2; sep = " " }') || nodes=""
+  read_failed=false
+  status=$(cluster_status 2>>"$errors") || {
+    status=unknown
+    read_failed=true
+  }
+  nodes=$(node_statuses 2>>"$errors") || read_failed=true
+  nodes=$(printf '%s\n' "$nodes" | awk -F '\t' 'NF == 2 { printf "%s%s=%s", sep, $1, $2; sep = " " }')
   line="cluster=$status${nodes:+ $nodes}"
 }
 
@@ -98,26 +141,34 @@ docs/troubleshooting.md explains each status.
 EOF
 }
 
-# Prints the status parameter names, the cluster's first.
+# Prints the status parameter names, the cluster's first. Like node_statuses, it skips
+# names Terraform doesn't create.
 status_parameters() {
+  local name name_pattern="^/$cluster/nodes/(cp|worker)-[0-9]+/status$"
   echo "/$cluster/status/cluster"
   aws ssm get-parameters-by-path --region "$region" --path "/$cluster/nodes" --recursive \
-    --query 'Parameters[].Name' --output text | tr '\t' '\n' | grep -v '^$' | sort
+    --query 'Parameters[].Name' --output text | tr '\t' '\n' | while read -r name; do
+    if [[ $name =~ $name_pattern ]]; then echo "$name"; fi
+  done | sort
 }
 
 # Prints one line per status change: when, how long since the first write (Terraform's
 # "pending"), the value, and how long it stayed. SSM keeps the last 100 versions of each
 # parameter, with LastModifiedDate, so this needs no extra bookkeeping on the nodes.
+# Values are checked like everywhere else: anything that isn't a status shows as invalid.
 print_history() {
-  local name label
+  local name label when value
   status_parameters | while read -r name; do
     label=${name#/"$cluster"/}
     label=${label#nodes/}
     label=${label%/status}
     label=${label#status/}
     aws ssm get-parameter-history --region "$region" --name "$name" --with-decryption \
-      --query 'Parameters[].[LastModifiedDate,Value]' --output text |
-      awk -F '\t' -v label="$label" 'NF >= 2 { print label "\t" $1 "\t" $2 }'
+      --query 'Parameters[].[LastModifiedDate, to_string([Value])]' --output text |
+      while IFS=$'\t' read -r when value; do
+        [[ $when =~ ^[0-9T:.+Z-]+$ ]] || continue
+        printf '%s\t%s\t%s\n' "$label" "$when" "$(decode_status "$value")"
+      done
   done | awk -F '\t' "$(history_awk)"
 }
 
@@ -161,7 +212,7 @@ EOF
 # timeout. Terraform created the parameter, so an error here is about access, not timing.
 if ! cluster_status >/dev/null 2>"$errors"; then
   echo "Can't read /$cluster/status/cluster in $region:" >&2
-  sed 's/^/  /' "$errors" >&2
+  printable <"$errors" | sed 's/^/  /' >&2
   echo "Check your AWS credentials (aws sts get-caller-identity), the region and the cluster name." >&2
   exit 3
 fi
@@ -181,6 +232,13 @@ case $mode in
     if is_failed; then
       next_steps "that failed"
       exit 1
+    fi
+    # A call that failed after the check above worked (throttling, say) is an AWS CLI
+    # error, not "in progress".
+    if [[ $read_failed == true ]]; then
+      echo "The AWS CLI failed while reading the statuses:" >&2
+      printable <"$errors" | sed 's/^/  /' >&2
+      exit 3
     fi
     exit 4
     ;;
@@ -203,7 +261,7 @@ while ((SECONDS < deadline)); do
 
   # A later call can still fail, for example when credentials expire during the wait.
   # Show the AWS CLI's message once, not on every line.
-  error=$(grep -v '^[[:space:]]*$' "$errors" | tail -n 1 || true)
+  error=$(printable <"$errors" | grep -v '^[[:space:]]*$' | tail -n 1 || true)
   if [[ -n $error && $error != "$last_error" ]]; then
     echo "  AWS CLI: $error" >&2
   fi

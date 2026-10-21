@@ -25,6 +25,11 @@ output "ssm_parameter_prefix" {
   value       = local.ssm_prefix
 }
 
+output "status_pattern" {
+  description = "Regular expression every status value matches. Readers show anything else as invalid."
+  value       = local.status_pattern
+}
+
 output "status_parameters" {
   description = "Names of the status parameters (never the secrets), keyed by \"cluster\" and by node name. Their keys are known at plan time."
   value = merge(

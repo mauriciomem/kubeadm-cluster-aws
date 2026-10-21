@@ -60,9 +60,10 @@ resource "terraform_data" "wait_for_cluster" {
 module "status" {
   source = "./modules/status"
 
-  cluster_name = local.cluster_name
-  region       = var.region
-  parameters   = module.cluster.status_parameters
+  cluster_name   = local.cluster_name
+  region         = var.region
+  parameters     = module.cluster.status_parameters
+  status_pattern = module.cluster.status_pattern
 
   depends_on = [module.cluster, terraform_data.wait_for_cluster]
 }

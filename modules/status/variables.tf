@@ -22,3 +22,8 @@ variable "region" {
   type        = string
   description = "AWS region, for the messages."
 }
+
+variable "status_pattern" {
+  type        = string
+  description = "Regular expression every status value matches (the cluster module's status_pattern output). Any other value shows as \"invalid\"."
+}
