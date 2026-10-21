@@ -62,7 +62,7 @@ Each node writes its progress to an SSM parameter. You can read it in three ways
 
 On the first plan, the `cluster_status` output shows `(known after apply)`, because the
 parameters don't exist yet. From then on, every plan and apply ends with a warning until the
-cluster is ready. While the nodes work, it reads:
+cluster is ready and every node has joined. While the nodes work, it reads:
 
 ```text
 Cluster kube-lab-a1b2 is not ready yet: cluster=pending cp-1=bootstrapping worker-1=pending worker-2=pending. Follow it with: ./scripts/wait-for-cluster.sh kube-lab-a1b2 us-east-1
@@ -95,19 +95,19 @@ Reading the statuses needs `ssm:GetParameter` on `/<cluster>/status/cluster` and
 ./scripts/wait-for-cluster.sh --once kube-lab-a1b2 us-east-1
 ```
 
-It exits with 0 when the cluster is ready, 1 when a node reports a failure, 4 while the
-bootstrap is still running, 3 when the AWS CLI can't read the status, and 64 when the arguments
-are wrong. That makes it easy to use in your own scripts.
+It exits with 0 when the cluster is ready and every node has joined, 1 when a node reports a
+failure, 4 while the bootstrap is still running, 3 when the AWS CLI can't read the status, and
+64 when the arguments are wrong. That makes it easy to use in your own scripts.
 
 ### Until it finishes
 
 Without `--once`, the script prints a line whenever a status changes, and repeats it every 2
-minutes so a long step doesn't look hung. When the cluster reaches `installing`, it prints the
-`get-kubeconfig.sh` line once: kubectl works from then on, and the nodes turn `Ready` as the
-network plugin starts on them.
+minutes so a long step doesn't look hung. Times are in UTC, like the nodes' bootstrap logs.
+When the cluster reaches `installing`, it prints the `get-kubeconfig.sh` line once: kubectl
+works from then on, and the nodes turn `Ready` as the network plugin starts on them.
 
-It exits with 0 when the cluster is ready, 1 when a node fails, 2 after 40 minutes without
-either, and 3 when the AWS CLI can't read the status at the start. In that last case the AWS
+It exits with 0 when the cluster is ready and every node has joined, 1 when a node fails, 2
+after 40 minutes without either, and 3 when the AWS CLI can't read the status at the start. In that last case the AWS
 CLI's own error, such as expired credentials or a cluster that doesn't exist in that region, is
 printed above the script's message. If a read fails later, for example when your credentials
 expire during the wait, the script shows the AWS CLI's error and keeps polling. `--help` shows
@@ -115,20 +115,21 @@ the usage.
 
 ### Afterward, with timings
 
-`--history` shows every value each status parameter has had, with the time SSM recorded it.
+`--history` shows every value each status parameter has had, with the time SSM recorded it, in
+UTC.
 The first value, `pending`, is Terraform creating the parameter (output abridged):
 
 ```text
 status/cluster
   2026-10-21T12:00:00.123000+00:00	pending
-  2026-10-21T12:03:50.456000+00:00	installing
-  2026-10-21T12:05:50.789000+00:00	ready
+  2026-10-21T12:04:30.456000+00:00	installing
+  2026-10-21T12:05:30.789000+00:00	ready
 nodes/worker-1/status
   2026-10-21T12:00:00.321000+00:00	pending
-  2026-10-21T12:01:10.654000+00:00	bootstrapping
-  2026-10-21T12:03:20.987000+00:00	waiting
-  2026-10-21T12:04:10.111000+00:00	joining
-  2026-10-21T12:05:05.222000+00:00	joined
+  2026-10-21T12:02:20.654000+00:00	bootstrapping
+  2026-10-21T12:03:50.987000+00:00	waiting
+  2026-10-21T12:04:50.111000+00:00	joining
+  2026-10-21T12:05:10.222000+00:00	joined
 ```
 
 It needs the `ssm:GetParameterHistory` permission. SSM keeps the last 100 versions of each
@@ -140,7 +141,7 @@ Each node reports one of these values:
 
 | Value | Meaning | Typical time in this state |
 |---|---|---|
-| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Under 1 minute after the node starts |
+| `pending` | The node hasn't installed the AWS CLI yet, so it can't report. | Usually under 1 minute after the node starts; 2 or 3 when the AWS CLI download is slow |
 | `bootstrapping` | Preparing the host and installing packages. | 1 to 3 minutes |
 | `initializing` | cp-1 runs `kubeadm init`. | About 1 minute |
 | `initialized` | The API is up and the kubeconfig is published. cp-1 installs the network plugin and kubelet-csr-approver, then waits until every node is `Ready`. | 2 to 5 minutes; gives up after 30 |

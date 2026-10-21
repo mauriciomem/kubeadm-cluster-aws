@@ -35,15 +35,19 @@ sudo -i
 
 ## Watch a node that joins later
 
-`wait-for-cluster.sh` only follows the first bootstrap. It returns at once after you scale out,
-because the cluster status already says `ready`. Watch the new node instead:
+After you add nodes, run `wait-for-cluster.sh` again. The cluster status still says `ready`
+from the first bootstrap, but the script also waits until every node has joined. So does the
+warning at the end of `terraform plan` and `terraform apply`. You can watch the nodes in
+Kubernetes too:
 
 ```bash
 kubectl get nodes -w
 ```
 
-Or read its status parameter. For a while it can still show the value from an earlier node
-with the same name, until the new node has installed the AWS CLI:
+A node you replace with `terraform apply -replace` keeps its status parameter. Until the new
+node has installed the AWS CLI, which can take 2 or 3 minutes, the parameter still shows the old
+node's `joined`, and the script can say the cluster is ready too early. Wait a few minutes
+before you run it, or read the node's status yourself:
 
 ```bash
 aws ssm get-parameter --region "$(terraform output -raw region)" \

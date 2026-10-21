@@ -35,13 +35,14 @@ terraform init
 terraform apply
 ```
 
-Terraform finishes before Kubernetes does. The nodes install Kubernetes on first boot, which
-takes 4 to 6 minutes after `terraform apply` returns, a little longer with three control
-planes. `terraform output next_steps` prints the commands below with your cluster's name filled
-in.
+Terraform finishes before Kubernetes does. `terraform apply` takes about 3.5 minutes, then the
+nodes install Kubernetes on first boot. With the default settings, the API is up about 2.5
+minutes after `terraform apply` returns, and every node is `Ready` about a minute later. Three
+control planes or Cilium add a few minutes, up to about 6 in all. `terraform output next_steps`
+prints the commands below with your cluster's name filled in.
 
-1. Follow the bootstrap. The script prints a status line whenever a node moves on, and returns
-   when the cluster is ready or a node fails:
+1. Follow the bootstrap. The script prints a status line, with the time in UTC, whenever a node
+   moves on. It returns when the cluster is ready or a node fails:
 
    ```bash
    ./scripts/wait-for-cluster.sh "$(terraform output -raw cluster_name)" "$(terraform output -raw region)"
@@ -49,14 +50,14 @@ in.
 
    ```text
    Waiting for kube-lab-a1b2 in us-east-1 (up to 40 min)...
-   12:02:04 cluster=pending cp-1=pending worker-1=pending worker-2=pending
-   12:03:10 cluster=pending cp-1=initializing worker-1=waiting worker-2=waiting
-   12:03:40 cluster=installing cp-1=initialized worker-1=waiting worker-2=waiting
+   12:02:04Z cluster=pending cp-1=pending worker-1=pending worker-2=pending
+   12:03:50Z cluster=pending cp-1=initializing worker-1=waiting worker-2=waiting
+   12:04:30Z cluster=installing cp-1=initialized worker-1=waiting worker-2=waiting
    The API is up. Fetch the kubeconfig now; the nodes turn Ready as the network plugin starts:
      eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
    Still waiting for the cluster to report ready...
-   12:04:20 cluster=installing cp-1=initialized worker-1=joining worker-2=joined
-   12:05:50 cluster=ready cp-1=joined worker-1=joined worker-2=joined
+   12:04:50Z cluster=installing cp-1=initialized worker-1=joining worker-2=joined
+   12:05:30Z cluster=ready cp-1=joined worker-1=joined worker-2=joined
    Cluster is ready. Point kubectl at it with:
      eval "$(./scripts/get-kubeconfig.sh kube-lab-a1b2 us-east-1)"
    ```
@@ -112,15 +113,17 @@ Most settings only take effect when a node is created. Changing `k8s_version` or
 running cluster upgrades nothing; only nodes you add later see the new value.
 [Configuration](docs/configuration.md) lists when each setting takes effect.
 
-To add workers, raise `worker_count` and run `terraform apply`. Before you remove or replace
-nodes, or lower `control_plane_count`, read [Operations](docs/operations.md). A control plane
-removed without first removing its etcd member can cost etcd its quorum and take the API down.
+To add workers, raise `worker_count` and run `terraform apply`.
+[Operations](docs/operations.md#watch-a-node-that-joins-later) shows how to follow them as they
+join. Before you remove or replace nodes, or lower `control_plane_count`, read
+[Operations](docs/operations.md). A control plane removed without first removing its etcd
+member can cost etcd its quorum and take the API down.
 
 ## Destroy the cluster
 
 ```bash
 rm -f ~/.kube/"$(terraform output -raw cluster_name)".yaml && unset KUBECONFIG
-terraform destroy                           # about 5 minutes
+terraform destroy                           # 2 to 4 minutes
 ```
 
 ## When something goes wrong
