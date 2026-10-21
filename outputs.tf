@@ -14,7 +14,7 @@ output "cluster_status" {
 }
 
 output "kubeconfig_command" {
-  description = "Command that downloads the admin kubeconfig to ~/.kube/<cluster>.yaml. Run it as eval \"$(...)\" to set KUBECONFIG in your shell; run on its own, it prints what to do. next_steps shows the eval form."
+  description = "Command that downloads the admin kubeconfig to ~/.kube/<cluster>.yaml. Run it as eval \"$(...)\" to set KUBECONFIG in your shell; next_steps shows the full line."
   value       = "./scripts/get-kubeconfig.sh ${local.cluster_name} ${var.region}"
 }
 
