@@ -48,9 +48,6 @@ eval "$(./scripts/get-kubeconfig.sh "$(terraform output -raw cluster_name)" "$(t
 kubectl get nodes -w
 ```
 
-The `eval` sets `KUBECONFIG` in your shell, so run it again in every new terminal.
-[Operations](docs/operations.md#point-kubectl-at-the-cluster) explains why.
-
 The first terminal ends with "Cluster is ready." `terraform output next_steps` prints these
 commands with your cluster's name filled in.
 
