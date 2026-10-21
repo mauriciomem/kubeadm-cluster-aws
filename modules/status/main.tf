@@ -25,10 +25,11 @@ locals {
 }
 
 # A check only warns: it never blocks plan, apply or destroy. The reads sit outside it so the
-# cluster_status output can use them too.
+# cluster_status output can use them too. After a scale-out the cluster already says ready, so
+# every node must also have joined.
 check "cluster_ready" {
   assert {
-    condition     = local.status["cluster"] == "ready"
+    condition     = local.status["cluster"] == "ready" && alltrue([for k, v in local.status : v == "joined" if k != "cluster"])
     error_message = local.message
   }
 }

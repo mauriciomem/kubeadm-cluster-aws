@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Waits for a kube-lab cluster to finish bootstrapping by polling its SSM status parameters.
 # docs/troubleshooting.md explains each status value. Runs on macOS (bash 3.2) and Linux.
+# Times are in UTC, like the nodes' bootstrap logs.
 #
 #   ./scripts/wait-for-cluster.sh <cluster-name> <region> [timeout-seconds]
 #   ./scripts/wait-for-cluster.sh --once <cluster-name> <region>
@@ -14,8 +15,8 @@ usage() {
   cat <<EOF
 usage: $0 [--once | --history] <cluster-name> <region> [timeout-seconds]
 
-Waits until the cluster reports ready (default timeout 2400 seconds), printing the statuses
-whenever they change.
+Waits until the cluster reports ready and every node has joined (default timeout 2400
+seconds), printing the statuses whenever they change. Times are in UTC.
 
   --once     print the statuses once and exit: 0 ready, 1 failed, 4 still in progress
   --history  print every value each status parameter has had, with its time
@@ -62,6 +63,16 @@ read_statuses() {
   echo
 }
 
+# is_ready <status line>: cp-1 reports ready and every node has joined. After a scale-out the
+# cluster already says ready while the new nodes are still on their way.
+is_ready() {
+  local word
+  [[ $1 == cluster=ready* ]] || return 1
+  for word in ${1#cluster=ready}; do
+    [[ $word == *=joined ]] || return 1
+  done
+}
+
 # next_steps <which node>
 next_steps() {
   cat >&2 <<EOF
@@ -85,14 +96,15 @@ case $mode in
     for name in "/$cluster/status/cluster" $(aws ssm get-parameters-by-path --region "$region" \
       --path "/$cluster/nodes" --recursive --query 'Parameters[].Name' --output text | tr '\t' '\n' | sort); do
       echo "${name#/"$cluster"/}"
-      aws ssm get-parameter-history --region "$region" --name "$name" \
+      # The AWS CLI prints the dates in the local time zone unless told otherwise.
+      TZ=UTC aws ssm get-parameter-history --region "$region" --name "$name" \
         --query 'Parameters[].[LastModifiedDate, Value]' --output text | sed 's/^/  /'
     done
     exit 0
     ;;
   once)
     echo "$line"
-    if [[ $line == cluster=ready* ]]; then exit 0; fi
+    if is_ready "$line"; then exit 0; fi
     if [[ $line == *=failed:* ]]; then
       next_steps "that failed"
       exit 1
@@ -114,7 +126,7 @@ while ((SECONDS < deadline)); do
   line=$(read_statuses) || line=$last_line
   # Only changes, plus a heartbeat every 2 minutes so a long step doesn't look hung.
   if [[ $line != "$last_line" || $((SECONDS - last_print)) -ge 120 ]]; then
-    printf '%s %s\n' "$(date +%T)" "$line"
+    printf '%s %s\n' "$(date -u +%TZ)" "$line"
     last_line=$line
     last_print=$SECONDS
   fi
@@ -126,7 +138,7 @@ while ((SECONDS < deadline)); do
     echo "Still waiting for the cluster to report ready..."
     api_announced=true
   fi
-  if [[ $line == cluster=ready* ]]; then
+  if is_ready "$line"; then
     echo "Cluster is ready. Point kubectl at it with:"
     echo "  eval \"\$($get_kubeconfig)\""
     exit 0

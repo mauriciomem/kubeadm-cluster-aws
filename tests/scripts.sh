@@ -89,6 +89,7 @@ case $cmd in
     fi
     ;;
   "ssm get-parameter-history")
+    printf 'TZ=%s\n' "${TZ:-}" >>"$d/calls"
     cat "$d/history$name"
     ;;
   "ssm put-parameter")
@@ -218,7 +219,7 @@ p=$FAKE_AWS_DIR/params/kube-lab-t1
 echo x >>"$FAKE_AWS_DIR/sleeps"
 case $(wc -l <"$FAKE_AWS_DIR/sleeps" | tr -d ' ') in
   1) printf joined >"$p/nodes/worker-1/status" ;;
-  2) printf ready >"$p/status/cluster" ;;
+  2) printf joined >"$p/nodes/cp-1/status" && printf ready >"$p/status/cluster" ;;
 esac
 EOF
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
@@ -229,6 +230,39 @@ check "wait: the announcement shows the eval form" test "$(grep -c 'get-kubeconf
 api_line=$(grep -n 'The API is up' "$work/out" | cut -d: -f1)
 ready_line=$(grep -n 'cluster=ready' "$work/out" | cut -d: -f1)
 check "wait: announces the API before ready" test "${api_line:-0}" -gt 0 -a "${api_line:-0}" -lt "${ready_line:-0}"
+
+# After a scale-out the cluster already says ready; the script waits for the new node too.
+cluster_with ready joined joined
+set_param /kube-lab-t1/nodes/worker-3/status pending
+"$test_bash" "$wait_script" --once kube-lab-t1 us-east-1 >"$work/out" 2>"$work/err"
+check "wait --once: ready with a node still pending exits 4" test $? -eq 4
+
+cat >"$FAKE_AWS_DIR/on_sleep" <<'EOF'
+p=$FAKE_AWS_DIR/params/kube-lab-t1/nodes/worker-3/status
+case $(cat "$p") in
+  pending) printf joining >"$p" ;;
+  joining) printf joined >"$p" ;;
+esac
+EOF
+"$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
+rc=$?
+check "wait: scale-out, then the new node joins, exits 0" test "$rc" -eq 0
+check "wait: scale-out keeps waiting while a node is joining" contains "$work/out" "worker-3=joining"
+check "wait: scale-out says ready only once every node joined" test "$(grep -A1 'worker-3=joined' "$work/out" | tail -n 1)" = "Cluster is ready. Point kubectl at it with:"
+
+cluster_with ready joined joined
+set_param /kube-lab-t1/nodes/worker-3/status failed:join
+"$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
+check "wait: scale-out with a failed node exits 1" test $? -eq 1
+
+# Times are in UTC, whatever the local time zone. Kolkata is 5:30 off, so hours and minutes differ.
+cluster_with ready joined joined
+before=$(date -u +%H:%M)
+TZ=Asia/Kolkata "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
+after=$(date -u +%H:%M)
+stamp=$(grep 'cluster=ready' "$work/out" | cut -c 1-9)
+check "wait: prints the time in UTC" test "${stamp%:*}" = "$before" -o "${stamp%:*}" = "$after"
+check "wait: marks the time with a Z" test "${stamp: -1}" = Z
 
 cluster_with ready joined joined
 "$test_bash" "$wait_script" kube-lab-t1 us-east-1 60 >"$work/out" 2>"$work/err"
@@ -254,6 +288,26 @@ check "wait --history: exits 0" test "$rc" -eq 0
 check "wait --history: cluster block first" test "$(sed -n 1p "$work/out")" = "status/cluster"
 check "wait --history: shows each value with its time" contains "$work/out" "$(printf '  2026-10-21T12:05:40+00:00\tjoined')"
 check "wait --history: one block per node" test "$(grep -c '^nodes/' "$work/out")" -eq 2
+check "wait --history: asks the AWS CLI for UTC" test "$(grep -c '^TZ=UTC$' "$FAKE_AWS_DIR/calls")" -eq 3
+
+# --- control-plane.sh: the cilium CLI belongs to root ----------------------------------
+# install_cilium runs with the commands it calls faked; the fakes log their arguments.
+cat >"$work/cilium.sh" <<'EOF'
+set -euo pipefail
+CILIUM_CLI_VERSION=v0.0.0 CILIUM_CLI_SHA256=0 CILIUM_VERSION=0.0.0
+fetch_verified() { echo "fetch_verified $*" >>"$CALLS"; }
+tar() { echo "tar $*" >>"$CALLS"; }
+install() { echo "install $*" >>"$CALLS"; }
+cilium() { :; }
+kubectl() { :; }
+EOF
+sed -n '/^install_cilium() {$/,/^}$/p' "$repo_root/modules/cluster/bootstrap/files/control-plane.sh" >>"$work/cilium.sh"
+echo install_cilium >>"$work/cilium.sh"
+: >"$work/cilium-calls"
+CALLS="$work/cilium-calls" "$test_bash" "$work/cilium.sh" >"$work/out" 2>"$work/err"
+check "install_cilium: runs with the fakes" test $? -eq 0
+check "install_cilium: installs the binary as root:root 0755" grep -q '^install -o root -g root -m 0755 .*/cilium /usr/local/bin/cilium$' "$work/cilium-calls"
+check "install_cilium: never extracts into /usr/local/bin" lacks "$work/cilium-calls" "-C /usr/local/bin"
 
 # --- lib.sh: steps and statuses -------------------------------------------------------
 # lib.sh hard-codes node paths, so the test runs a copy that points them into $work.

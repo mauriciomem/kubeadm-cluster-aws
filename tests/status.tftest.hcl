@@ -73,6 +73,35 @@ run "bootstrapping_cluster_warns" {
   }
 }
 
+# After a scale-out the cluster already says ready while the new node is still on its way.
+run "node_added_later_warns" {
+  command = plan
+
+  module {
+    source = "./modules/status"
+  }
+
+  override_data {
+    target = data.aws_ssm_parameter.status["cluster"]
+    values = { insecure_value = "ready" }
+  }
+  override_data {
+    target = data.aws_ssm_parameter.status["cp-1"]
+    values = { insecure_value = "joined" }
+  }
+  override_data {
+    target = data.aws_ssm_parameter.status["worker-1"]
+    values = { insecure_value = "pending" }
+  }
+
+  expect_failures = [check.cluster_ready]
+
+  assert {
+    condition     = strcontains(output.message, "cluster=ready cp-1=joined worker-1=pending")
+    error_message = "The warning must show the node that hasn't joined; got: ${output.message}"
+  }
+}
+
 run "failed_bootstrap_names_node_and_step" {
   command = plan
 

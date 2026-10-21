@@ -74,12 +74,15 @@ install_calico() {
 }
 
 install_cilium() {
-  local tarball
-  tarball=$(mktemp)
+  local dir
+  dir=$(mktemp -d)
   fetch_verified "https://github.com/cilium/cilium-cli/releases/download/$CILIUM_CLI_VERSION/cilium-linux-amd64.tar.gz" \
-    "$CILIUM_CLI_SHA256" "$tarball"
-  tar -xzf "$tarball" -C /usr/local/bin cilium
-  rm -f "$tarball"
+    "$CILIUM_CLI_SHA256" "$dir/cilium.tar.gz"
+  # The tarball stores the binary as uid 1001, which is ssm-user on these nodes, and tar
+  # running as root keeps that owner. install makes it root's.
+  tar -xzf "$dir/cilium.tar.gz" -C "$dir" cilium
+  install -o root -g root -m 0755 "$dir/cilium" /usr/local/bin/cilium
+  rm -rf "$dir"
 
   # ipam.mode=kubernetes uses the kubeadm podSubnet; Cilium's own default pool overlaps 10.x VPCs.
   cilium install --version "$CILIUM_VERSION" \

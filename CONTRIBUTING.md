@@ -70,7 +70,7 @@ credentials and creates nothing. The tests pin the values they assume, so your
 `tests/scripts.sh` is plain bash. It runs `get-kubeconfig.sh` and `wait-for-cluster.sh` against
 a fake `aws` and a fake `sleep` on `PATH`, with `/bin/bash` (set `TEST_BASH` to use another). On
 macOS that is bash 3.2, the oldest version the operator scripts support. It also runs the step,
-retry and status helpers in `lib.sh`. The nodes run bash 5, and the tests of the ERR trap need
+retry and status helpers in `lib.sh`, and checks that `install_cilium` installs the CLI as root. The nodes run bash 5, and the tests of the ERR trap need
 bash 4 or later: they use `bash` from `PATH` (set `NODE_BASH` to use another) and are skipped
 on an older one. CI runs them.
 
