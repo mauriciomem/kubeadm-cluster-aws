@@ -90,7 +90,11 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --version
-          shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh
+          shellcheck -S warning -x scripts/*.sh modules/cluster/bootstrap/files/*.sh tests/*.sh
+
+      # The operator scripts and the lib.sh status helpers, against a fake aws on PATH.
+      - name: script tests
+        run: bash tests/scripts.sh
 
       # Renders three layouts with render-templates.sh, then the pinned kubeadm checks every
       # init and join config, including the taints: [] variants.
