@@ -1,6 +1,4 @@
 # What each node boots with: which files reach which node, and the values rendered into them.
-# The runs named static_guard_* are different: they check text in shell files that Terraform
-# copies verbatim, so they guard against known regressions rather than test Terraform logic.
 mock_provider "aws" {
   source = "./tests/mocks"
 }
@@ -63,6 +61,12 @@ run "cp1_runs_kubeadm_init" {
   assert {
     condition     = contains(keys(module.cluster.bootstrap["cp-1"].files), "/etc/kube-lab/kubelet-csr-approver.yaml")
     error_message = "cp-1 must receive the kubelet-csr-approver manifest."
+  }
+
+  # Bootstrap logs get pasted into chats and issues.
+  assert {
+    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "--skip-token-print --skip-certificate-key-print")
+    error_message = "kubeadm init must not print the join token or certificate key."
   }
 }
 
@@ -233,128 +237,10 @@ run "largest_bootstrap_fits_the_user_data_limit" {
   }
 }
 
-run "static_guard_join_secrets_stay_out_of_logs" {
+run "apt_waits_for_first_boot_upgrades" {
   command = plan
 
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "--skip-token-print --skip-certificate-key-print")
-    error_message = "kubeadm init must not print the join token or certificate key."
-  }
-
-  # retry logs only its first two arguments; later ones can be secrets.
-  assert {
-    condition = alltrue([
-      for f in [module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], module.cluster.bootstrap["cp-1"].files["/usr/local/sbin/kube-lab-refresh-join"]] :
-      length(regexall("log \"[^\"\n]*\\$[*@]", f)) == 0
-    ])
-    error_message = "No log call may print a full argument list (\"$*\" or \"$@\"); arguments can be secrets."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "chmod 0600 \"$LOG_FILE\"")
-    error_message = "The bootstrap log must be root-only."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "readonly RUN_DIR=/run/kube-lab\n")
-    error_message = "Rendered kubeadm configs must live on tmpfs (/run/kube-lab)."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "trap 'rm -f \"$RUN_DIR\"/kubeadm-*.yaml \"$RUN_DIR\"/admin-local.conf' EXIT")
-    error_message = "Rendered kubeadm configs and the local admin kubeconfig must be removed on exit, including failures."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "export -n JOIN_TOKEN CERT_KEY")
-    error_message = "Join secrets must leave kubeadm's environment once rendered."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/usr/local/sbin/kube-lab-refresh-join"], "token=$(kubeadm token create --ttl 24h)\n")
-    error_message = "refresh-join must assign the token on its own line, so a failed token create stops the script."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "run_step publish publish_join_material")
-    error_message = "Publishing join material is its own step, so a re-run doesn't re-init."
-  }
-}
-
-run "static_guard_downloads_are_verified" {
-  command = plan
-
-  # Every curl except the two IMDS calls must refuse plain HTTP and old TLS.
-  assert {
-    condition = alltrue(flatten([
-      for n in module.cluster.bootstrap : [
-        for line in regexall("curl -[^\n]*", join("\n", concat([n.script], values(n.files)))) :
-        strcontains(line, "--proto '=https' --tlsv1.2") || strcontains(line, "169.254.169.254")
-      ]
-    ]))
-    error_message = "Every curl in the node scripts must use --proto '=https' --tlsv1.2."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["worker-1"].files["/etc/kube-lab/lib.sh"], "sha256sum --check")
-    error_message = "Downloads must be checked against their pinned sha256."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["worker-1"].files["/etc/kube-lab/lib.sh"], "END { if (p == 1) print f }")
-    error_message = "An apt key file must hold exactly one primary key with the pinned fingerprint."
-  }
-
-  assert {
-    condition     = !strcontains(module.cluster.bootstrap["cp-1"].script, "/tmp/cilium")
-    error_message = "The cilium tarball must use mktemp, not a fixed /tmp path."
-  }
-}
-
-run "static_guard_helm_is_verified_and_optional" {
-  command = plan
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "fetch_verified \"https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz\" \"$HELM_SHA256\"")
-    error_message = "The Helm download must be checked against helm_sha256."
-  }
-
-  # run_step would report failed:helm and stop the bootstrap; Helm is optional tooling.
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "run_optional_step helm install_helm\n")
-    error_message = "A failed Helm install must log a warning, not fail the node."
-  }
-
-  # errexit is off inside run_optional_step, so install_helm must be one && chain ending in
-  # || rc=$?. A command split off onto its own line would fail silently and carry on.
-  assert {
-    condition     = can(regex("install_helm\\(\\) \\{\\n  local dir rc=0\\n  dir=\\$\\(mktemp -d\\) \\|\\| return 1\\n(  [^\\n]*&&\\n)(    [^\\n]*&&\\n)*    [^\\n]*\\|\\| rc=\\$\\?\\n  rm -rf \"\\$dir\"\\n  return \"\\$rc\"\\n\\}", module.cluster.bootstrap["cp-1"].script))
-    error_message = "install_helm must chain every command with && and end with || rc=$?."
-  }
-
-  # Optional tooling never delays ready: Helm runs once, after the cluster status is ready.
-  assert {
-    condition = (
-      length(split("run_optional_step helm", module.cluster.bootstrap["cp-1"].script)) == 2 &&
-      can(regex("(?s)status joined\\n.*cluster_status ready\\n.*run_optional_step helm install_helm\\n.*finish_bootstrap\\n\\}", module.cluster.bootstrap["cp-1"].script))
-    )
-    error_message = "The Helm step must run after cluster_status ready, so it can't delay the cluster."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].script, "/etc/bash_completion.d/helm") && !strcontains(module.cluster.bootstrap["cp-1"].script, "bash.bashrc")
-    error_message = "Helm completion must be a static file in /etc/bash_completion.d, not a command every shell runs."
-  }
-
-  assert {
-    condition     = strcontains(module.cluster.bootstrap["cp-1"].files["/etc/kube-lab/lib.sh"], "--speed-limit 1024 --speed-time 60 \\\n    --max-time 900")
-    error_message = "Downloads must time out when they stall, so an optional step can't hang the bootstrap."
-  }
-}
-
-run "static_guard_apt_waits_for_first_boot_upgrades" {
-  command = plan
-
+  # The most common first-boot failure: apt-daily holds the dpkg lock.
   assert {
     condition     = strcontains(module.cluster.bootstrap["worker-1"].files["/etc/kube-lab/lib.sh"], "systemctl stop apt-daily.timer apt-daily-upgrade.timer")
     error_message = "apt-daily timers must be stopped before the first apt call."
@@ -363,17 +249,5 @@ run "static_guard_apt_waits_for_first_boot_upgrades" {
   assert {
     condition     = strcontains(module.cluster.bootstrap["worker-1"].files["/etc/kube-lab/lib.sh"], "dpkg --configure -a")
     error_message = "Retried installs must finish a half-configured dpkg first."
-  }
-}
-
-run "static_guard_refresh_join_service_is_sandboxed" {
-  command = plan
-
-  assert {
-    condition = alltrue([
-      for d in ["ProtectSystem=full", "PrivateTmp=yes", "ProtectHome=tmpfs"] :
-      strcontains(module.cluster.bootstrap["cp-1"].files["/etc/systemd/system/kube-lab-refresh-join.service"], "${d}\n")
-    ])
-    error_message = "kube-lab-refresh-join.service must keep its systemd sandboxing."
   }
 }

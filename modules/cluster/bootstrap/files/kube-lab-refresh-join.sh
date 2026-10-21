@@ -15,20 +15,16 @@ source /etc/kube-lab/lib.sh
 main() {
   local token cert_key
   export KUBECONFIG=/etc/kubernetes/admin.conf
-  # ssm_put stages values in RUN_DIR, a tmpfs that is empty after a reboot.
-  install -d -m 0700 "$RUN_DIR"
 
   if [[ ${1:-} == --upload-certs ]]; then
     cert_key=$(upload_certs)
     retry 5 ssm_put join/certificate-key "$cert_key"
-    unset cert_key
     log "uploaded control-plane certificates (valid for 2h)"
   fi
 
   # Separate assignment, so a failed token create stops the script instead of publishing "".
   token=$(kubeadm token create --ttl 24h)
   retry 5 ssm_put join/token "$token"
-  unset token
   log "published a new join token (valid for 24h)"
 }
 

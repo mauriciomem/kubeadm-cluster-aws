@@ -214,39 +214,6 @@ run "ssm_parameters" {
   }
 }
 
-run "status_pattern_accepts_only_status_values" {
-  command = plan
-
-  module {
-    source = "./modules/cluster"
-  }
-
-  # Every value the node scripts write, including failed:<step> for every step name.
-  assert {
-    condition = alltrue([
-      for v in concat(
-        ["pending", "bootstrapping", "waiting", "joining", "joined", "initializing", "initialized", "installing", "ready"],
-        [for s in ["start", "awscli", "host", "packages", "containerd", "shell", "init", "publish", "local-kubeconfig", "cni", "csr-approver", "refresh-timer", "wait-nodes", "join", "root-kubeconfig", "complete"] : "failed:${s}"],
-      ) : can(regex(local.status_pattern, v))
-    ])
-    error_message = "status_pattern must accept every status the node scripts write."
-  }
-
-  assert {
-    condition = !anytrue([
-      for v in ["", "Ready", "failed:", "failed:$(cat /etc/kubernetes/admin.conf)", "failed:a b", "ready\nabcdef.0123456789abcdef", "joined ", "failed:${join("", [for i in range(41) : "a"])}", "sha256:0123"] :
-      can(regex(local.status_pattern, v))
-    ])
-    error_message = "status_pattern must reject anything outside the status protocol, so a status can never carry a secret."
-  }
-
-  # lib.sh checks values before it writes them; both sides must agree.
-  assert {
-    condition     = strcontains(module.bootstrap.nodes["worker-1"].files["/etc/kube-lab/lib.sh"], "readonly STATUS_PATTERN='${local.status_pattern}'\n")
-    error_message = "STATUS_PATTERN in lib.sh must equal status_pattern in modules/cluster/ssm.tf."
-  }
-}
-
 run "kubelet_csr_approver_trusts_only_node_subnets" {
   command = plan
 

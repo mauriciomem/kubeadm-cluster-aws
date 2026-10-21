@@ -7,8 +7,7 @@ set -Eeuo pipefail
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source /etc/kube-lab/lib.sh
 
-# Bootstrap talks to the local API server so add-ons don't wait for NLB target registration.
-# The EXIT trap in start_bootstrap removes it.
+# The add-ons talk to the local API server, so they don't wait for NLB target registration.
 LOCAL_KUBECONFIG=$RUN_DIR/admin-local.conf
 
 # Own step, so a re-run after a failed publish doesn't re-init. That re-run has lost the
@@ -30,36 +29,29 @@ publish_join_material() {
   # Joiners poll the token, so it goes last.
   retry 5 ssm_put join/token "$JOIN_TOKEN"
   # Advanced, like the tier Terraform created it with (modules/cluster/ssm.tf).
-  retry 5 ssm_put_file kubeconfig/admin /etc/kubernetes/admin.conf Advanced
-  unset JOIN_TOKEN CERT_KEY
+  # file:// makes the AWS CLI read the value from the file.
+  retry 5 ssm_put kubeconfig/admin file:///etc/kubernetes/admin.conf Advanced
 }
 
 init_cluster() {
-  local config=$RUN_DIR/kubeadm-init.yaml
-  export PRIVATE_IP JOIN_TOKEN CERT_KEY CA_CERT_HASH=""
-
-  PRIVATE_IP=$(retry 5 imds local-ipv4)
+  local config=$RUN_DIR/kubeadm-init.yaml ip
+  ip=$(retry 5 imds local-ipv4)
+  # Globals, so publish_join_material can publish them.
   JOIN_TOKEN=$(kubeadm token generate)
   CERT_KEY=$(kubeadm certs certificate-key)
-  render_kubeadm_config /etc/kube-lab/kubeadm-init.yaml.tmpl "$config"
-  # Still needed by publish_join_material, but not in kubeadm's environment.
-  export -n JOIN_TOKEN CERT_KEY
+  render_kubeadm_config /etc/kube-lab/kubeadm-init.yaml.tmpl "$config" "$ip" "$JOIN_TOKEN" "" "$CERT_KEY"
 
   status initializing
   # The skip flags keep the token and certificate key out of the bootstrap and cloud-init logs.
   kubeadm init --config "$config" --upload-certs --skip-token-print --skip-certificate-key-print
-  rm -f "$config"
 }
 
 # A copy of admin.conf that talks to this node's API server directly. It asks IMDS for
-# the IP again because a re-run skips init_cluster, which set PRIVATE_IP.
+# the IP again because a re-run skips init_cluster.
 write_local_kubeconfig() {
   local ip
   ip=$(retry 5 imds local-ipv4)
-  (
-    umask 077
-    sed "s#^\(\s*server:\).*#\1 https://$ip:6443#" /etc/kubernetes/admin.conf >"$LOCAL_KUBECONFIG"
-  )
+  sed "s#^\(\s*server:\).*#\1 https://$ip:6443#" /etc/kubernetes/admin.conf >"$LOCAL_KUBECONFIG"
 }
 
 install_calico() {
@@ -124,19 +116,17 @@ install_csr_approver() {
   retry 5 kubectl apply -f /etc/kube-lab/kubelet-csr-approver.yaml
 }
 
-# Optional (helm_enabled), run by run_optional_step: errexit is off in here, so every
-# command is chained, and a failure only logs a warning. Completion is generated once into
-# a static file, so no shell runs helm at startup.
+# helm_enabled: the Helm CLI. Completion goes into a static file, so no shell runs helm at
+# startup.
 install_helm() {
-  local dir rc=0
-  dir=$(mktemp -d) || return 1
-  fetch_verified "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" "$HELM_SHA256" "$dir/helm.tar.gz" &&
-    tar -xzf "$dir/helm.tar.gz" -C "$dir" linux-amd64/helm &&
-    install -m 0755 "$dir/linux-amd64/helm" /usr/local/bin/helm &&
-    /usr/local/bin/helm completion bash >"$dir/helm.bash" &&
-    install -D -m 0644 "$dir/helm.bash" /etc/bash_completion.d/helm || rc=$?
+  local dir
+  dir=$(mktemp -d)
+  fetch_verified "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" "$HELM_SHA256" "$dir/helm.tar.gz"
+  tar -xzf "$dir/helm.tar.gz" -C "$dir" linux-amd64/helm
+  install -m 0755 "$dir/linux-amd64/helm" /usr/local/bin/helm
+  install -d /etc/bash_completion.d
+  /usr/local/bin/helm completion bash >/etc/bash_completion.d/helm
   rm -rf "$dir"
-  return "$rc"
 }
 
 enable_join_refresh() {
@@ -190,15 +180,13 @@ main() {
     run_step join join_cluster
   fi
   run_always root-kubeconfig setup_root_kubeconfig
-  status joined
-  # After every node status is final, so they are once wait-for-cluster.sh sees ready.
-  # A no-op except on cp-1.
-  cluster_status ready
-  # Root has a kubeconfig on every control plane, so that's where Helm goes. After ready,
-  # so optional tooling never delays the cluster; it writes no status.
+  # Root has a kubeconfig on every control plane, so that's where Helm goes.
   if [[ $HELM_ENABLED == true ]]; then
-    run_optional_step helm install_helm
+    run_step helm install_helm
   fi
+  status joined
+  # Last, so every node status is final once wait-for-cluster.sh sees ready. cp-1 only.
+  cluster_status ready
   finish_bootstrap
 }
 

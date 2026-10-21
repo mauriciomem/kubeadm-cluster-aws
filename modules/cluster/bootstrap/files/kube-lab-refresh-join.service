@@ -7,10 +7,3 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/kube-lab-refresh-join
-# kubeadm token create and upload-certs only read /etc/kubernetes; nothing here writes
-# under /usr, /boot or /etc. ssm_put stages values in /run/kube-lab, which stays writable.
-ProtectSystem=full
-PrivateTmp=yes
-# tmpfs rather than yes: the aws-cli snap must create $HOME/snap on every run.
-ProtectHome=tmpfs
-# No NoNewPrivileges: it blocks the AppArmor transitions snap-confine needs to start aws.

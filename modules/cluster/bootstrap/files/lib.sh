@@ -1,150 +1,69 @@
 #!/bin/bash
-# Helpers shared by the kube-lab node scripts: control-plane.sh, worker.sh and
-# kube-lab-refresh-join. Sourced, never executed directly. The callers turn on strict mode
-# (set -Eeuo pipefail) before they source this file.
+# Helpers shared by control-plane.sh, worker.sh and kube-lab-refresh-join.
+# Sourced after the caller has turned on strict mode (set -Eeuo pipefail).
 #
-# Globals from /etc/kube-lab/cluster.env, written by Terraform (templates/cluster.env.tftpl):
-#   NODE_NAME, NODE_ROLE      this node, for example worker-2 and worker
-#   IS_INIT_NODE              "true" on cp-1, the node that runs kubeadm init
-#   PREVIOUS_CONTROL_PLANE    the control plane this one joins after; empty if none
-#   EXPECTED_NODES            how many nodes cp-1 waits for
-#   REGION, SSM_PREFIX        where this cluster's SSM parameters live
-#   API_ENDPOINT              the API load balancer, as host:port
-#   K8S_VERSION, K8S_MINOR, CONTAINERD_VERSION   package versions
-#   CNI, CALICO_*, CILIUM_*                      CNI choice, versions and checksums
-#   HELM_ENABLED, HELM_VERSION, HELM_SHA256      optional Helm CLI ("true" on control planes only)
-#
-# Status protocol. docs/architecture.md (Status values) is the reference.
-#   /<cluster>/nodes/<node>/status, written by each node:
-#     every node starts at "pending", Terraform's placeholder (modules/cluster/ssm.tf)
-#     joining nodes: bootstrapping -> waiting -> joining -> joined
-#     cp-1:          bootstrapping -> initializing -> initialized -> joined
-#   /<cluster>/status/cluster, written by cp-1 only: pending -> installing -> ready
-#   On failure, failed:<step>, where <step> is the run_step or run_always name.
-#   Readers: scripts/wait-for-cluster.sh, Terraform (modules/status), and
-#   join_cluster (cp-N waits for cp-(N-1)).
-#   Status parameters are plain Strings, readable without decryption, so they must never
-#   carry anything else: ssm_put_status only writes values that match STATUS_PATTERN.
-#   allowed_pattern in modules/cluster/ssm.tf (the same regex) catches a bug here; IAM
-#   decides who may write, and the readers treat any other value as "invalid".
+# Status protocol (docs/architecture.md has the full table):
+#   /<cluster>/nodes/<node>/status  pending -> bootstrapping -> waiting -> joining -> joined
+#                                   (cp-1: ... -> initializing -> initialized -> joined)
+#   /<cluster>/status/cluster       pending -> installing -> ready   (cp-1 writes it)
+#   On failure: failed:<step>, where <step> is the run_step or run_always name.
 
+# Written by Terraform from templates/cluster.env.tftpl.
 # shellcheck source-path=SCRIPTDIR source=../templates/cluster.env.tftpl
 source /etc/kube-lab/cluster.env
 
-# cloud-init and systemd start us without HOME, which the aws-cli snap needs, and snaps
-# live in /snap/bin.
+# cloud-init and systemd start us without HOME, which the aws-cli snap needs.
 export HOME=${HOME:-/root}
 export PATH=$PATH:/snap/bin
 export DEBIAN_FRONTEND=noninteractive
 
-# Trust anchors for the apt repositories; a key that doesn't match aborts the bootstrap.
-# https://docs.docker.com/engine/install/ubuntu/
+# Signing keys of the apt repositories, from the Docker and Kubernetes install docs.
 readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
-# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
 readonly K8S_KEY_FINGERPRINT=DE15B14486CD377B9E876E1A234654DA9A296436
 
-# One <step>.done marker per finished step.
-readonly STATE_DIR=/var/lib/kube-lab
-# tmpfs, so rendered kubeadm configs and staged SSM values (they hold secrets) never reach disk.
-readonly RUN_DIR=/run/kube-lab
+readonly STATE_DIR=/var/lib/kube-lab # one <step>.done marker per finished step
+readonly RUN_DIR=/run/kube-lab       # tmpfs: rendered kubeadm configs hold the join token
 readonly LOG_FILE=/var/log/kube-lab-bootstrap.log
-# The step that is running, for log lines and failed:<step>. Set by run_step and run_always.
 STEP=${STEP:-start}
-# Every value a status parameter accepts. Keep equal to status_pattern in modules/cluster/ssm.tf.
-readonly STATUS_PATTERN='^(pending|bootstrapping|waiting|joining|joined|initializing|initialized|installing|ready|failed:[a-z0-9-]{1,40})$'
 
 # --- Logging, SSM and status ---------------------------------------------------------
 
-#######################################
-# Logs a line to stderr, so functions can still return values on stdout.
-# Globals: NODE_NAME, STEP
-#######################################
+# Logs to stderr, so functions can still return values on stdout.
 log() {
   printf '%s %s [%s] %s\n' "$(date -u +%FT%TZ)" "$NODE_NAME" "$STEP" "$*" >&2
 }
 
-#######################################
-# Writes a file's content to a SecureString parameter under SSM_PREFIX.
-# Globals: REGION, SSM_PREFIX
-# Arguments: name, file, tier (default Standard; PutParameter can't downgrade a tier)
-#######################################
-ssm_put_file() {
-  local name=$1 file=$2 tier=${3:-Standard}
-  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/$name" \
-    --type SecureString --tier "$tier" --overwrite --value "file://$file" >/dev/null
-}
-
-#######################################
-# Writes a value to a SecureString parameter. The value goes through a root-only temp
-# file on tmpfs, so secrets never show up in `ps` or on disk.
-# Globals: RUN_DIR
-# Arguments: name, value, tier (default Standard)
-#######################################
+# ssm_put <name> <value> [tier]: writes a SecureString under SSM_PREFIX. A value of
+# file://<path> makes the AWS CLI read it from that file.
+# PutParameter can't downgrade a tier, so pass the tier Terraform created it with.
 ssm_put() {
-  local name=$1 value=$2 tier=${3:-Standard} tmp rc=0
-  tmp=$(mktemp -p "$RUN_DIR")
-  printf '%s' "$value" >"$tmp"
-  ssm_put_file "$name" "$tmp" "$tier" || rc=$?
-  rm -f "$tmp"
-  return "$rc"
+  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/$1" \
+    --type SecureString --tier "${3:-Standard}" --overwrite --value "$2" >/dev/null
 }
 
-#######################################
-# Prints a decrypted parameter value.
-# Globals: REGION, SSM_PREFIX
-# Arguments: name
-#######################################
 ssm_get() {
-  local name=$1
-  aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/$name" \
+  aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/$1" \
     --with-decryption --query Parameter.Value --output text
 }
 
-#######################################
-# Writes a status parameter. No --type or --tier: Terraform owns those, and an update
-# doesn't need them. The value is not a secret, so it can go on the command line.
-# Globals: REGION, SSM_PREFIX, STATUS_PATTERN
-# Arguments: name, value
-# Returns: 1 if the value isn't a status value; it is not written then
-#######################################
-ssm_put_status() {
-  local name=$1 value=$2
-  if [[ ! $value =~ $STATUS_PATTERN ]]; then
-    log "refusing to write a value that is not a status to $name"
-    return 1
-  fi
-  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/$name" \
-    --overwrite --value "$value" >/dev/null
-}
-
-#######################################
-# Publishes this node's status. Never fails: a lost status update must not stop the bootstrap.
-# Globals: NODE_NAME
-# Arguments: status
-#######################################
+# Publishes this node's status. Never fails: a lost update must not stop the bootstrap.
+# Terraform owns the parameter's type and allowed_pattern (modules/cluster/ssm.tf).
 status() {
-  local value=$1
-  ssm_put_status "nodes/$NODE_NAME/status" "$value" || log "could not publish node status '$value'"
+  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/nodes/$NODE_NAME/status" \
+    --overwrite --value "$1" >/dev/null || log "could not publish node status '$1'"
 }
 
-#######################################
-# Publishes the cluster status, on cp-1 only (a no-op elsewhere). Never fails.
-# Globals: IS_INIT_NODE
-# Arguments: status
-#######################################
+# Publishes the cluster status; only cp-1 does.
 cluster_status() {
-  local value=$1
   [[ $IS_INIT_NODE == true ]] || return 0
-  ssm_put_status status/cluster "$value" || log "could not publish cluster status '$value'"
+  aws ssm put-parameter --region "$REGION" --name "$SSM_PREFIX/status/cluster" \
+    --overwrite --value "$1" >/dev/null || log "could not publish cluster status '$1'"
 }
 
-#######################################
-# ERR trap: reports failed:<step> for this node (and the cluster, on cp-1), then exits.
-# Globals: STEP
-#######################################
+# ERR trap: reports failed:<step>, then exits.
 on_error() {
   local rc=$?
-  # With errtrace, subshells inherit the trap; report once, from the main shell.
+  # Subshells inherit the trap (errtrace); report once, from the main shell.
   [[ $BASHPID == "$$" ]] || exit "$rc"
   log "failed with exit code $rc"
   status "failed:$STEP"
@@ -152,21 +71,13 @@ on_error() {
   exit "$rc"
 }
 
-#######################################
-# Call once at the top of a bootstrap script: creates the state directories, sends all
-# output to LOG_FILE as well, and installs the traps.
-# Globals: STATE_DIR, RUN_DIR, LOG_FILE
-#######################################
 start_bootstrap() {
   mkdir -p "$STATE_DIR"
   install -d -m 0700 "$RUN_DIR"
-  [[ -e $LOG_FILE ]] || install -m 0600 /dev/null "$LOG_FILE"
-  chmod 0600 "$LOG_FILE"
   exec > >(tee -a "$LOG_FILE") 2>&1
   trap on_error ERR
-  # Secrets on tmpfs go even when the script fails: rendered kubeadm configs, and the
-  # local admin kubeconfig control-plane.sh writes.
-  trap 'rm -f "$RUN_DIR"/kubeadm-*.yaml "$RUN_DIR"/admin-local.conf' EXIT
+  # Also on failure: the files in RUN_DIR hold the join token or an admin kubeconfig.
+  trap 'rm -f "$RUN_DIR"/*' EXIT
 }
 
 finish_bootstrap() {
@@ -174,31 +85,21 @@ finish_bootstrap() {
   log "bootstrap complete"
 }
 
-#######################################
-# Runs a step once: a marker file lets a manual re-run skip work that already succeeded.
-# Globals: STATE_DIR, STEP (set to the step name)
-# Arguments: step name, then the command to run
-#######################################
+# run_step <name> <command...>: runs a step once. A marker file lets a re-run skip it.
 run_step() {
-  local name=$1
+  STEP=$1
   shift
-  STEP=$name
-  if [[ -f $STATE_DIR/$name.done ]]; then
+  if [[ -f $STATE_DIR/$STEP.done ]]; then
     log "already done"
     return 0
   fi
   log "starting"
   "$@"
-  touch "$STATE_DIR/$name.done"
+  touch "$STATE_DIR/$STEP.done"
   log "done"
 }
 
-#######################################
-# Like run_step, but without a marker: for quick work that every run must repeat, such as
-# files on tmpfs. A failure still reports failed:<step name>.
-# Globals: STEP (set to the step name)
-# Arguments: step name, then the command to run
-#######################################
+# Like run_step, without a marker, for quick work every run must repeat.
 run_always() {
   STEP=$1
   shift
@@ -207,45 +108,16 @@ run_always() {
   log "done"
 }
 
-#######################################
-# Like run_step, for optional tooling the cluster works without: a failure is logged as a
-# WARNING and the bootstrap carries on, with no failed:<step> status. The next run retries it.
-# The command runs inside an if, where bash ignores errexit, so it must check every command
-# it runs itself.
-# Globals: STATE_DIR, STEP (set to the step name)
-# Arguments: step name, then the command to run
-#######################################
-run_optional_step() {
-  local name=$1
-  shift
-  STEP=$name
-  if [[ -f $STATE_DIR/$name.done ]]; then
-    log "already done"
-    return 0
-  fi
-  log "starting (optional)"
-  if "$@"; then
-    touch "$STATE_DIR/$name.done"
-    log "done"
-  else
-    log "WARNING: optional step $name failed; the cluster is not affected. Run the bootstrap again to retry it"
-  fi
-}
-
 # --- Retry and wait ------------------------------------------------------------------
 
-# Prints the next backoff delay: double the current one, capped at 60 seconds.
+# Doubles a delay, up to 60 seconds.
 next_delay() {
   local doubled=$(($1 * 2))
   echo $((doubled > 60 ? 60 : doubled))
 }
 
-#######################################
-# Runs a command until it succeeds, with exponential backoff from 5s, capped at 60s.
-# Logs only the command and its first argument: later ones can be secrets.
-# Arguments: attempts, then the command
-# Returns: 1 when every attempt failed
-#######################################
+# retry <attempts> <command...>: backs off from 5s to 60s. Logs only the command name and
+# its first argument, because later arguments can be secrets.
 retry() {
   local attempts=$1 n=1 delay=5
   shift
@@ -261,11 +133,7 @@ retry() {
   done
 }
 
-#######################################
-# Polls a command until it succeeds or the timeout passes.
-# Arguments: timeout in seconds, description for the log, then the command
-# Returns: 1 on timeout
-#######################################
+# wait_for <timeout-seconds> <description> <command...>
 wait_for() {
   local timeout=$1 what=$2 delay=5 deadline
   shift 2
@@ -283,44 +151,26 @@ wait_for() {
 
 # --- Downloads -----------------------------------------------------------------------
 
-#######################################
-# Prints an instance metadata value, through IMDSv2.
-# Arguments: metadata path, for example local-ipv4
-#######################################
+# imds <path>: an instance metadata value, through IMDSv2.
 imds() {
-  local path=$1 token
+  local token
   token=$(curl -sf --max-time 5 -X PUT http://169.254.169.254/latest/api/token \
     -H 'X-aws-ec2-metadata-token-ttl-seconds: 60') &&
-    curl -sf --max-time 5 -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/meta-data/$path"
+    curl -sf --max-time 5 -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/meta-data/$1"
 }
 
-#######################################
-# curl that refuses plain HTTP and TLS older than 1.2, including on redirects. A stalled
-# transfer (under 1 KB/s for a minute) or one that runs past 15 minutes fails, so retry
-# can try again; the largest download, the cilium CLI, is about 75 MB.
-# Arguments: url, then extra curl arguments
-#######################################
-https_get() {
-  local url=$1
-  shift
-  curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
-    --max-time 900 "$@" "$url"
-}
-
-#######################################
-# Downloads a file and checks it against a pinned sha256. The file only appears at dest
-# once it has passed the check.
-# Arguments: url, sha256, dest
-#######################################
+# fetch_verified <url> <sha256> <dest>: downloads a file and checks its pinned checksum.
+# The file only appears at dest once it has passed. --max-time turns a stalled download
+# into a failure that retry can repeat. The URL comes first so retry's log line shows it.
 fetch_verified() {
-  local url=$1 sha256=$2 dest=$3 tmp=$3.download
-  retry 5 https_get "$url" -o "$tmp"
-  if ! echo "$sha256  $tmp" | sha256sum --check --quiet -; then
-    rm -f "$tmp"
+  local url=$1 sha256=$2 dest=$3
+  retry 5 curl "$url" -fsSL --max-time 600 -o "$dest.download"
+  if ! echo "$sha256  $dest.download" | sha256sum --check --quiet -; then
+    rm -f "$dest.download"
     log "checksum mismatch for $url"
     return 1
   fi
-  mv -f "$tmp" "$dest"
+  mv -f "$dest.download" "$dest"
 }
 
 install_aws_cli() {
@@ -330,16 +180,12 @@ install_aws_cli() {
 
 # --- Host preparation and packages ---------------------------------------------------
 
-#######################################
-# Swap off, kernel modules and sysctls for Kubernetes.
-#######################################
 prepare_host() {
   swapoff -a
   sed -ri '/\sswap\s/s/^#*/#/' /etc/fstab
 
-  # The Kubernetes docs only require ip_forward. br_netfilter and bridge-nf-call-* are
-  # kept because many CNI and kube-proxy setups, and CKA material, expect bridged traffic
-  # to pass through iptables.
+  # Kubernetes only requires ip_forward. Bridged traffic through iptables is what most CNI
+  # and kube-proxy setups, and the CKA material, expect.
   printf '%s\n' overlay br_netfilter >/etc/modules-load.d/kubernetes.conf
   modprobe overlay
   modprobe br_netfilter
@@ -352,43 +198,32 @@ EOF
   sysctl --system >/dev/null
 }
 
-#######################################
-# Installs an apt signing key after checking that the file holds exactly one primary key,
-# with the pinned fingerprint.
-# Arguments: url, fingerprint, dest, format ("dearmor" to convert from ASCII armor)
-# Returns: 1 if the key doesn't match
-#######################################
+# install_apt_key <url> <fingerprint> <dest>: installs an apt signing key, dearmored, if it
+# has the pinned fingerprint. A key that doesn't match stops the bootstrap.
 install_apt_key() {
-  local url=$1 fingerprint=$2 dest=$3 format=${4:-armored} tmp actual
+  local url=$1 fingerprint=$2 dest=$3 tmp keys
   tmp=$(mktemp)
-  retry 5 https_get "$url" -o "$tmp"
-  # Extra keys in the file are rejected, not just a wrong one.
-  actual=$(gpg --show-keys --with-colons "$tmp" |
-    awk -F: '$1 == "pub" { p++ } $1 == "fpr" && !f { f = $10 } END { if (p == 1) print f }')
-  if [[ $actual != "$fingerprint" ]]; then
-    log "apt key from $url must be exactly one key with fingerprint '$fingerprint', got '$actual'"
+  retry 5 curl "$url" -fsSL --max-time 60 -o "$tmp"
+  keys=$(gpg --show-keys --with-colons "$tmp")
+  if ! grep -q "^fpr:*:$fingerprint:" <<<"$keys"; then
+    log "the key from $url does not have fingerprint $fingerprint"
     return 1
   fi
   install -d -m 0755 /etc/apt/keyrings
-  if [[ $format == dearmor ]]; then
-    gpg --dearmor --yes -o "$dest" "$tmp"
-  else
-    install -m 0644 "$tmp" "$dest"
-  fi
+  gpg --dearmor --yes -o "$dest" "$tmp"
   chmod 0644 "$dest"
   rm -f "$tmp"
 }
 
-# True when no apt run is in progress. The actual work of unattended upgrades runs inside
-# apt-daily-upgrade.service; unattended-upgrades.service is a long-running shutdown helper,
-# always active, so it isn't checked.
+# True when no apt run is in progress. unattended-upgrades.service is always active, so the
+# check looks at the services that do the work.
 apt_idle() {
   ! systemctl is-active --quiet apt-daily.service apt-daily-upgrade.service || return 1
   ! { command -v fuser >/dev/null && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; }
 }
 
-# apt-daily fires minutes after first boot and holds the dpkg lock while it runs. Stop the
-# timers, wait out a run already in progress, and keep apt's own lock wait as a backstop.
+# apt-daily starts minutes after first boot and holds the dpkg lock. Stop its timers, wait
+# out a run already in progress, and keep apt's own lock wait as a backstop.
 quiesce_apt() {
   systemctl stop apt-daily.timer apt-daily-upgrade.timer || true
   wait_for 900 "apt-daily to finish" apt_idle
@@ -404,30 +239,26 @@ apt_get() {
   retry 5 apt_get_once "$@"
 }
 
-#######################################
-# Installs containerd, kubeadm, kubelet and kubectl from the Docker and Kubernetes apt
-# repositories, and holds them at the pinned versions.
-# Globals: CONTAINERD_VERSION, K8S_VERSION, K8S_MINOR, the *_KEY_FINGERPRINT constants
-#######################################
+# containerd, kubeadm, kubelet and kubectl, held at the pinned versions.
 install_packages() {
   quiesce_apt
   apt_get update
   apt_get install -y ca-certificates curl gnupg gettext-base jq
 
   # containerd.io from Docker's repo: Ubuntu's own containerd is too old for the 1.37 upgrade lab.
-  install_apt_key https://download.docker.com/linux/ubuntu/gpg "$DOCKER_KEY_FINGERPRINT" /etc/apt/keyrings/docker.asc
+  install_apt_key https://download.docker.com/linux/ubuntu/gpg "$DOCKER_KEY_FINGERPRINT" /etc/apt/keyrings/docker.gpg
   cat >/etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
 Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
 Components: stable
 Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
+Signed-By: /etc/apt/keyrings/docker.gpg
 EOF
 
   # Same layout as the kubernetes.io install docs, so the upgrade lab's repo switch applies verbatim.
   install_apt_key "https://pkgs.k8s.io/core:/stable:/v$K8S_MINOR/deb/Release.key" "$K8S_KEY_FINGERPRINT" \
-    /etc/apt/keyrings/kubernetes-apt-keyring.gpg dearmor
+    /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$K8S_MINOR/deb/ /" \
     >/etc/apt/sources.list.d/kubernetes.list
 
@@ -469,10 +300,8 @@ EOF
   printf '%s\n' 'set tabstop=2 shiftwidth=2 expandtab' >>/etc/vim/vimrc.local
 }
 
-#######################################
-# The steps every node runs before the roles split. The node can only report status once
-# the AWS CLI is installed, so it stays "pending" until then.
-#######################################
+# Every node runs these before the roles split. A node can only report status once the AWS
+# CLI is installed, so it stays "pending" until then.
 prepare_node() {
   run_step awscli install_aws_cli
   status bootstrapping
@@ -484,12 +313,8 @@ prepare_node() {
 
 # --- Join ----------------------------------------------------------------------------
 
-#######################################
-# Re-uploads the control-plane certificates under a new key and prints the key. It is read
-# from kubeadm's stdout, never logged; supplying our own key with
-# --skip-certificate-key-print would put it in argv instead.
-# Outputs: the certificate key
-#######################################
+# Re-uploads the control-plane certificates under a new key and prints the key. It comes
+# from kubeadm's stdout and is never logged.
 upload_certs() {
   local key
   key=$(kubeadm init phase upload-certs --upload-certs | tail -n 1)
@@ -506,14 +331,14 @@ setup_root_kubeconfig() {
   install -m 0600 /etc/kubernetes/admin.conf /root/.kube/config
 }
 
-# True once cp-1 has replaced Terraform's "pending" placeholder. Arguments: parameter name
+# True once cp-1 has replaced Terraform's "pending" placeholder.
 param_published() {
-  local name=$1 value
-  value=$(ssm_get "$name") || return 1
+  local value
+  value=$(ssm_get "$1") || return 1
   [[ -n $value && $value != pending ]]
 }
 
-# True if the node's status is one of the given values. Arguments: node, then statuses
+# node_status_in <node> <status...>
 node_status_in() {
   local node=$1 value
   shift
@@ -521,54 +346,40 @@ node_status_in() {
   [[ " $* " == *" $value "* ]]
 }
 
-# Any HTTP status, even 401 or 403, means the NLB reached a live API server.
-# Globals: API_ENDPOINT
+# Any HTTP status, even 401 or 403, means the load balancer reached a live API server.
 api_reachable() {
-  [[ $(curl --proto '=https' --tlsv1.2 -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://$API_ENDPOINT/livez" || true) != 000 ]]
+  [[ $(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://$API_ENDPOINT/livez" || true) != 000 ]]
 }
 
-#######################################
-# Fills the runtime placeholders in a kubeadm template. The result holds secrets: it is
-# root-only, on tmpfs, and the EXIT trap removes it.
-# Globals: PRIVATE_IP, JOIN_TOKEN, CA_CERT_HASH, CERT_KEY (exported by the caller)
-# Arguments: template, output file
-#######################################
+# render_kubeadm_config <template> <out> <ip> <token> <ca-hash> <cert-key>
+# Fills the ${...} placeholders Terraform left in a kubeadm template (see its header). The
+# values only reach envsubst's environment, never kubeadm's.
 render_kubeadm_config() {
-  local template=$1 out=$2
-  (
-    umask 077
-    # shellcheck disable=SC2016 # envsubst takes the literal variable names.
-    envsubst '${PRIVATE_IP} ${JOIN_TOKEN} ${CA_CERT_HASH} ${CERT_KEY}' <"$template" >"$out"
-  )
+  # shellcheck disable=SC2016 # envsubst takes the literal variable names.
+  PRIVATE_IP=$3 JOIN_TOKEN=$4 CA_CERT_HASH=$5 CERT_KEY=$6 \
+    envsubst '${PRIVATE_IP} ${JOIN_TOKEN} ${CA_CERT_HASH} ${CERT_KEY}' <"$1" >"$2"
 }
 
-#######################################
-# Joins this node (a worker, or cp-2 and later) through the API load balancer.
-# The waits are generous on purpose: the first live run had every node joined about four
-# minutes after apply. They only bound how long a broken boot hangs before failed:join.
-# Globals: NODE_ROLE, PREVIOUS_CONTROL_PLANE, RUN_DIR
-# Node status: waiting -> joining
-#######################################
+# Joins this node (a worker, or cp-2 and later) through the API load balancer. The waits
+# only bound how long a broken boot hangs before it reports failed:join.
 join_cluster() {
-  local config=$RUN_DIR/kubeadm-join.yaml
-  export PRIVATE_IP JOIN_TOKEN CA_CERT_HASH CERT_KEY=""
+  local config=$RUN_DIR/kubeadm-join.yaml ip token ca_hash cert_key=""
 
   status waiting
   wait_for 2400 "join token" param_published join/token
   if [[ $NODE_ROLE == control-plane ]]; then
     # etcd admits one learner at a time, so control planes join strictly in order.
     wait_for 2400 "$PREVIOUS_CONTROL_PLANE" node_status_in "$PREVIOUS_CONTROL_PLANE" initialized joined
-    CERT_KEY=$(retry 5 ssm_get join/certificate-key)
+    cert_key=$(retry 5 ssm_get join/certificate-key)
   fi
   wait_for 900 "API server via NLB" api_reachable
 
-  PRIVATE_IP=$(retry 5 imds local-ipv4)
-  JOIN_TOKEN=$(retry 5 ssm_get join/token)
-  CA_CERT_HASH=$(retry 5 ssm_get join/ca-cert-hash)
-  render_kubeadm_config /etc/kube-lab/kubeadm-join.yaml.tmpl "$config"
-  unset JOIN_TOKEN CA_CERT_HASH CERT_KEY
+  # Separate assignments, so a failed read stops the script before kubeadm runs.
+  ip=$(retry 5 imds local-ipv4)
+  token=$(retry 5 ssm_get join/token)
+  ca_hash=$(retry 5 ssm_get join/ca-cert-hash)
+  render_kubeadm_config /etc/kube-lab/kubeadm-join.yaml.tmpl "$config" "$ip" "$token" "$ca_hash" "$cert_key"
 
   status joining
   kubeadm join --config "$config"
-  rm -f "$config"
 }

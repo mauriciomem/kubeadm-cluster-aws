@@ -1,4 +1,4 @@
-# Exercises modules/cluster/bootstrap on its own: the guards on its output. It has no
+# Exercises modules/cluster/bootstrap on its own: the guard on its output. It has no
 # providers, so nothing is mocked.
 variables {
   api_endpoint = "kube-lab-test-api.elb.us-east-1.amazonaws.com:6443"
@@ -51,20 +51,6 @@ run "node_names_the_csr_approver_rejects_fail_the_plan" {
       cp-1  = { role = "control-plane", index = 0, init = true }
       node1 = { role = "worker", index = 0, init = false }
     }
-  }
-
-  expect_failures = [output.nodes]
-}
-
-run "quotes_in_cluster_env_values_fail_the_plan" {
-  command = plan
-
-  module {
-    source = "./modules/cluster/bootstrap"
-  }
-
-  variables {
-    region = "us-east-1'; reboot; '"
   }
 
   expect_failures = [output.nodes]

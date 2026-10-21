@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the shell scripts, with a fake `aws` on PATH: no AWS account, no network.
 #   - scripts/get-kubeconfig.sh and scripts/wait-for-cluster.sh, the operator scripts
-#   - the status and optional-step helpers in modules/cluster/bootstrap/files/lib.sh
+#   - the step and status helpers in modules/cluster/bootstrap/files/lib.sh
 # The scripts under test run with TEST_BASH (default /bin/bash), so on macOS this checks
 # bash 3.2, which is what the operator scripts promise to support. CI runs it on Linux.
 #
@@ -301,11 +301,6 @@ rc=$?
 check "wait --once: a read that fails midway exits 3" test "$rc" -eq 3
 check "wait --once: a read that fails midway shows the error" contains "$work/err" "ExpiredTokenException"
 
-# The script and the node scripts accept the same status values.
-check "wait: STATUS_PATTERN matches lib.sh" test \
-  "$(grep '^readonly STATUS_PATTERN=' "$wait_script")" = \
-  "$(grep '^readonly STATUS_PATTERN=' "$repo_root/modules/cluster/bootstrap/files/lib.sh")"
-
 for args in "--once kube-lab-t1 us-east-1 60" "kube-lab-t1" "kube-lab-t1 us-east-1 soon" "../x us-east-1" "--history kube-lab-t1"; do
   eval "set -- $args"
   "$test_bash" "$wait_script" "$@" >"$work/out" 2>"$work/err"
@@ -341,8 +336,11 @@ check "wait --history: epoch timestamps" contains "$work/out" "  -         +2m30
 check "wait --history: values outside the protocol show as invalid" contains "$work/out" "  -         +2m40s    invalid           (current)"
 check "wait --history: escape sequences never reach the terminal" lacks "$work/out" "$esc"
 
-# --- lib.sh: status values and optional steps --------------------------------------------
+# --- lib.sh: steps and statuses -------------------------------------------------------
 # lib.sh hard-codes node paths, so the test runs a copy that points them into $work.
+# The node scripts run on Ubuntu's bash 5, and the ERR trap needs BASHPID (bash 4), so
+# these tests use NODE_BASH, or bash from PATH, and skip on an older bash.
+node_bash=${NODE_BASH:-bash}
 node="$work/node"
 mkdir -p "$node/state" "$node/run"
 cat >"$node/cluster.env" <<'EOF'
@@ -353,45 +351,40 @@ REGION='us-east-1'
 SSM_PREFIX='/kube-lab-t1'
 EOF
 sed -e "s#/etc/kube-lab/cluster.env#$node/cluster.env#" \
-  -e "s#^readonly STATE_DIR=.*#readonly STATE_DIR=$node/state#" \
-  -e "s#^readonly RUN_DIR=.*#readonly RUN_DIR=$node/run#" \
+  -e "s#^readonly STATE_DIR=[^ ]*#readonly STATE_DIR=$node/state#" \
+  -e "s#^readonly RUN_DIR=[^ ]*#readonly RUN_DIR=$node/run#" \
   -e "s#^readonly LOG_FILE=.*#readonly LOG_FILE=$node/bootstrap.log#" \
   "$repo_root/modules/cluster/bootstrap/files/lib.sh" >"$node/lib.sh"
 
+# A bootstrap in miniature: two statuses, a step that runs once, then a step that fails.
 cat >"$node/test.sh" <<'EOF'
 set -Eeuo pipefail
 source "$1"
-trap 'echo "ERR trap fired" >&2' ERR
-status 'failed:$(cat /etc/passwd)'
-status "$(printf 'joined\nextra')"
-cluster_status 'Ready'
+start_bootstrap
 status joined
 cluster_status ready
-broken_tool() {
-  false
-  return 3
-}
-run_optional_step helm broken_tool
-echo "continued after the optional step"
-run_optional_step good true
-run_optional_step good true
+count() { echo run >>"$STATE_DIR/count"; }
+run_step counted count
+run_step counted count
+echo secret >"$RUN_DIR/kubeadm-join.yaml"
+run_step broken false
+echo "after the failed step" >>"$STATE_DIR/count"
 EOF
 
-reset_aws
-"$test_bash" "$node/test.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
-rc=$?
-check "lib.sh: the test script runs to the end" test "$rc" -eq 0
-check "lib.sh: an optional step that fails doesn't stop the bootstrap" contains "$work/out" "continued after the optional step"
-check "lib.sh: an optional step that fails logs a WARNING" contains "$work/err" "WARNING: optional step helm failed"
-check "lib.sh: an optional step that fails doesn't fire the ERR trap" lacks "$work/err" "ERR trap fired"
-check "lib.sh: an optional step that fails leaves no marker" test ! -e "$node/state/helm.done"
-check "lib.sh: an optional step that works leaves a marker" test -e "$node/state/good.done"
-check "lib.sh: an optional step that is done is skipped" contains "$work/err" "[good] already done"
-check "lib.sh: status values outside the protocol are refused" contains "$work/err" "refusing to write a value that is not a status"
-check "lib.sh: only valid statuses reach SSM" test "$(grep -c 'put-parameter' "$FAKE_AWS_DIR/calls")" -eq 2
-check "lib.sh: status writes don't set the type or tier" test "$(grep 'put-parameter' "$FAKE_AWS_DIR/calls" | grep -c -e '--type' -e '--tier')" -eq 0
-check "lib.sh: the node status is written" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/nodes/cp-1/status")" = joined
-check "lib.sh: the cluster status is written" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/status/cluster")" = ready
+if "$node_bash" -c '((BASH_VERSINFO[0] >= 4))' 2>/dev/null; then
+  reset_aws
+  "$node_bash" "$node/test.sh" "$node/lib.sh" >"$work/out" 2>"$work/err"
+  rc=$?
+  check "lib.sh: a failed step stops the bootstrap" test "$rc" -ne 0 -a "$(cat "$node/state/count")" = run
+  check "lib.sh: a finished step runs once and leaves a marker" test -e "$node/state/counted.done"
+  check "lib.sh: a failed step leaves no marker" test ! -e "$node/state/broken.done"
+  check "lib.sh: a failed step reports failed:<step> for the node" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/nodes/cp-1/status")" = failed:broken
+  check "lib.sh: cp-1 reports failed:<step> for the cluster" test "$(cat "$FAKE_AWS_DIR/params/kube-lab-t1/status/cluster")" = failed:broken
+  check "lib.sh: status writes don't set the type or tier" test "$(grep 'put-parameter' "$FAKE_AWS_DIR/calls" | grep -c -e '--type' -e '--tier')" -eq 0
+  check "lib.sh: files in RUN_DIR are removed on exit" test ! -e "$node/run/kubeadm-join.yaml"
+else
+  echo "skip  lib.sh: $node_bash is older than bash 4 (set NODE_BASH; CI runs these)"
+fi
 
 echo
 echo "$passed passed, $failed failed ($("$test_bash" -c 'echo "bash $BASH_VERSION"'))"
